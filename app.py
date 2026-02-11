@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 from datetime import date, timedelta
 from firebase_init import init_firebase, get_db, get_bucket
@@ -6,11 +5,13 @@ from auth import (
     ensure_admin_seed, login_form, get_current_user, role_badge, change_password,
     signup_form, admin_users_page
 )
-from emailer import send_email, send_email_admins, tpl_admin_new_agreement, tpl_operator_new_receipt, tpl_client_receipt_decision
+from emailer import (
+    send_email, send_email_admins,
+    tpl_admin_new_agreement, tpl_operator_new_receipt, tpl_client_receipt_decision
+)
 from calculations import schedule_declining, schedule_french
 from google.cloud import firestore as gcf
 import firebase_admin
-import json
 import traceback
 
 st.set_page_config(page_title="Asistente de Convenios de Pago", page_icon="💳", layout="wide")
@@ -94,7 +95,6 @@ def create_agreement_page(db, user):
         client_doc = None
         q = db.collection("users").where("email", "==", client_email).limit(1).stream()
         for d in q:
-            # Aseguramos que el cliente esté aprobado
             if d.to_dict().get("status") == "APPROVED":
                 client_doc = d
             break
@@ -131,7 +131,7 @@ def generate_schedule(db, ag_ref):
                             "receipt_status": None, "receipt_url": None, "receipt_note": None})
     batch.commit()
 
-# -------------------- Comprobantes (cliente sube / operador revisa) --------------------
+# -------------------- Comprobantes --------------------
 def upload_receipt(db, ag_doc, inst_doc, user):
     st.write("**Subir comprobante (PDF/JPG/PNG, máx. ~10 MB)**")
     up = st.file_uploader("Archivo", type=["pdf","jpg","jpeg","png"], key=f"up_{inst_doc.id}")
@@ -140,7 +140,6 @@ def upload_receipt(db, ag_doc, inst_doc, user):
         path = f"receipts/{ag_doc.id}/{inst_doc.id}/{up.name}"
         blob = bucket.blob(path)
         blob.upload_from_file(up, content_type=up.type)
-        # Guardamos en la cuota
         inst_doc.reference.update({
             "receipt_status": "PENDING",
             "receipt_url": path,
@@ -148,15 +147,14 @@ def upload_receipt(db, ag_doc, inst_doc, user):
             "receipt_uploaded_by": user["uid"],
             "receipt_uploaded_at": gcf.SERVER_TIMESTAMP
         })
-        # Aviso a operador por email
         ag = ag_doc.to_dict()
         op = db.collection("users").document(ag["operator_id"]).get().to_dict()
-        send_email(op["email"], "Nuevo comprobante subido", tpl_operator_new_receipt(ag_doc.id, inst_doc.to_dict()["number"], user.get("email"), st.secrets.get("APP_BASE_URL","")))
+        send_email(op["email"], "Nuevo comprobante subido",
+                   tpl_operator_new_receipt(ag_doc.id, inst_doc.to_dict()["number"], user.get("email"), st.secrets.get("APP_BASE_URL","")))
         st.success("Comprobante cargado. Queda pendiente de revisión.")
 
 def operator_review_receipts_page(db, user):
     st.subheader("🔎 Comprobantes pendientes")
-    # Buscar cuotas con receipt_status == PENDING de convenios a cargo del operador
     pending = db.collection("agreements").where("operator_id", "==", user["uid"]).stream()
     count = 0
     for ag_doc in pending:
@@ -169,39 +167,35 @@ def operator_review_receipts_page(db, user):
             for inst in items:
                 d = inst.to_dict()
                 st.write(f"Cuota {d['number']} - Vence {d['due_date']} - Monto ${d['total']:,.2f}")
-                # Link firmado temporal para descargar
-                url = None
                 try:
-                    from datetime import timedelta
                     blob = get_bucket().blob(d["receipt_url"])
                     url = blob.generate_signed_url(expiration=timedelta(minutes=15))
                     st.markdown(f"[Descargar comprobante]({url})")
                 except Exception as e:
-                    st.error(f"No se pudo generar link: {e}")
+                    st.error(f"No se pudo generar link de descarga: {e}")
                 note = st.text_input("Observación (si rechazás)", key=f"note_{inst.id}")
                 c1, c2 = st.columns(2)
                 if c1.button("Aprobar", key=f"ap_{inst.id}"):
                     inst.reference.update({"receipt_status": "APPROVED", "receipt_note": None, "paid": True, "paid_at": gcf.SERVER_TIMESTAMP})
-                    # correo a cliente
                     cl = db.collection("users").document(ag["client_id"]).get().to_dict()
-                    send_email(cl["email"], "Comprobante aprobado", tpl_client_receipt_decision(ag_doc.id, d["number"], "APROBADO", "", st.secrets.get("APP_BASE_URL","")))
+                    send_email(cl["email"], "Comprobante aprobado",
+                               tpl_client_receipt_decision(ag_doc.id, d["number"], "APROBADO", "", st.secrets.get("APP_BASE_URL","")))
                     st.success("Comprobante aprobado y cuota marcada como pagada.")
                     st.rerun()
                 if c2.button("Rechazar", key=f"rj_{inst.id}"):
                     inst.reference.update({"receipt_status": "REJECTED", "receipt_note": note or ""})
                     cl = db.collection("users").document(ag["client_id"]).get().to_dict()
-                    send_email(cl["email"], "Comprobante rechazado", tpl_client_receipt_decision(ag_doc.id, d["number"], "RECHAZADO", note or "", st.secrets.get("APP_BASE_URL","")))
+                    send_email(cl["email"], "Comprobante rechazado",
+                               tpl_client_receipt_decision(ag_doc.id, d["number"], "RECHAZADO", note or "", st.secrets.get("APP_BASE_URL","")))
                     st.warning("Comprobante rechazado.")
                     st.rerun()
                 count += 1
     if count == 0:
         st.info("No hay comprobantes pendientes.")
 
-# -------------------- Vistas --------------------
+# -------------------- Paneles --------------------
 def admin_dashboard_page(db):
     st.subheader("📊 Panel (admin) — métricas")
-    # KPIs sin datos personales
-    # 1) Total convenios por estado
     states = ["DRAFT","PENDING_ACCEPTANCE","ACTIVE","COMPLETED","CANCELLED"]
     counts = {s:0 for s in states}
     agreements = list(db.collection("agreements").stream())
@@ -212,14 +206,12 @@ def admin_dashboard_page(db):
     with c1:
         st.write("**Convenios por estado**")
         st.json(counts)
-    # 2) Aceptación (PENDING_ACCEPTANCE -> ACTIVE)
     total_sent = counts.get("PENDING_ACCEPTANCE",0) + counts.get("ACTIVE",0) + counts.get("COMPLETED",0)
     accepted = counts.get("ACTIVE",0) + counts.get("COMPLETED",0)
     rate = (accepted / total_sent * 100) if total_sent else 0
     with c2:
         st.write("**Tasa de aceptación**")
         st.write(f"{rate:.1f}% (sobre {total_sent} enviados)")
-    # 3) Evolución de pagos (pagadas vs pendientes)
     paid, pending = 0,0
     for a in agreements:
         for it in a.reference.collection("installments").stream():
@@ -229,15 +221,50 @@ def admin_dashboard_page(db):
                 pending += 1
     st.write("**Estado global de cuotas**")
     st.write(f"Pagadas: {paid} · Pendientes: {pending}")
-    # 4) Distribución por operador (sin identidades de cliente)
     dist = {}
     for a in agreements:
         op = a.to_dict().get("operator_id")
         dist[op] = dist.get(op,0)+1
     st.write("**Convenios por operador (IDs)**")
     st.json(dist)
-    st.caption("Nota: Esta vista evita exponer datos personales de clientes; sólo IDs de operador y conteos/estados.")
+    st.caption("Vista sin datos personales de clientes.")
 
+def operator_dashboard_page(db, user):
+    st.subheader("📈 Panel (operador) — mis métricas")
+    col = db.collection("agreements").where("operator_id", "==", user["uid"])
+    agreements = list(col.stream())
+    if not agreements:
+        st.info("No tenés convenios asignados aún.")
+        return
+    states = {"DRAFT":0,"PENDING_ACCEPTANCE":0,"ACTIVE":0,"COMPLETED":0,"CANCELLED":0}
+    for a in agreements:
+        states[a.to_dict().get("status","DRAFT")] += 1
+    c1, c2 = st.columns(2)
+    with c1:
+        st.write("**Mis convenios por estado**")
+        st.json(states)
+    total_sent = states["PENDING_ACCEPTANCE"] + states["ACTIVE"] + states["COMPLETED"]
+    accepted = states["ACTIVE"] + states["COMPLETED"]
+    rate = (accepted/total_sent*100) if total_sent else 0
+    with c2:
+        st.write("**Mi tasa de aceptación**")
+        st.write(f"{rate:.1f}% (sobre {total_sent} enviados)")
+    paid, pending = 0,0
+    for a in agreements:
+        for it in a.reference.collection("installments").stream():
+            if it.to_dict().get("paid"):
+                paid += 1
+            else:
+                pending += 1
+    st.write("**Cuotas (solo mis convenios)**")
+    st.write(f"Pagadas: {paid} · Pendientes: {pending}")
+    # Comprobantes pendientes
+    pend = 0
+    for a in agreements:
+        pend += len(list(a.reference.collection("installments").where("receipt_status","==","PENDING").stream()))
+    st.write(f"**Comprobantes pendientes de revisar**: {pend}")
+
+# -------------------- Listado con eliminación admin --------------------
 def list_agreements_page(db, user):
     st.subheader("📄 Mis convenios")
     role = user.get("role")
@@ -252,14 +279,15 @@ def list_agreements_page(db, user):
 
     for doc in agreements:
         ag = doc.to_dict()
-        with st.expander(f"[{doc.id}] {ag.get('title','(sin título)')} · {ag.get('status')}"):
+        title = ag.get('title','(sin título)')
+        with st.expander(f"[{doc.id}] {title} · {ag.get('status')}"):
             st.write(
                 f"**Deuda:** ${ag['principal']:,.2f} · **Interés:** {ag['interest_rate']*100:.2f}%/mes · "
                 f"**Cuotas:** {ag['installments']} · **Método:** {('Capital fijo' if ag['method']=='declining' else 'Francés')}"
             )
             if ag.get("notes"): st.caption(ag["notes"])
 
-            cols = st.columns(4)
+            cols = st.columns(5 if role=="admin" else 4)
             can_edit = (role in ["admin","operador"]) and ag["status"] in ["DRAFT","PENDING_ACCEPTANCE"]
             if can_edit and cols[0].button("Recalcular calendario", key=f"recalc_{doc.id}"):
                 generate_schedule(db, doc.reference); st.success("Calendario recalculado."); st.rerun()
@@ -273,6 +301,33 @@ def list_agreements_page(db, user):
                 doc.reference.update({"status":"ACTIVE","accepted_at":gcf.SERVER_TIMESTAMP})
                 st.success("Convenio aceptado. ¡Gracias!"); notify_agreement_accepted(db, doc.reference); st.rerun()
 
+            # Admin: Eliminar convenio (con confirmación)
+            if role == "admin":
+                with cols[4]:
+                    confirm = st.checkbox(f"Confirmar eliminar {doc.id}", key=f"chk_del_{doc.id}")
+                    if st.button("Eliminar convenio", key=f"del_{doc.id}"):
+                        if not confirm:
+                            st.warning("Tildá la confirmación para eliminar.")
+                        else:
+                            # Borrar cuotas y comprobantes asociados
+                            try:
+                                for it in doc.reference.collection("installments").stream():
+                                    d = it.to_dict()
+                                    # borrar archivo del storage si hubiera
+                                    if d.get("receipt_url"):
+                                        try:
+                                            get_bucket().blob(d["receipt_url"]).delete()
+                                        except Exception:
+                                            pass
+                                    it.reference.delete()
+                                # Borrar el convenio
+                                doc.reference.delete()
+                                st.success("Convenio eliminado.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"No se pudo eliminar: {e}")
+
+            # Tabla de cuotas
             st.write("#### Calendario de cuotas")
             items = list(doc.reference.collection("installments").order_by("number").stream())
             st.dataframe([{
@@ -292,13 +347,13 @@ def list_agreements_page(db, user):
                         st.write(f"**Cuota {d['number']}** — Estado: {d.get('receipt_status') or 'SIN COMPROBANTE'}")
                         upload_receipt(db, doc, it, user)
 
-            # Operador: acceso rápido a revisión (también está la página dedicada)
+            # Operador: acceso rápido a revisión
             if role == "operador":
                 st.info("Para revisar comprobantes pendientes, usá el menú: Comprobantes")
 
 # -------------------- Diagnóstico (solo admin) --------------------
 def diagnostics_page():
-    st.subheader("🔎 Diagnóstico de conexión")
+    st.subheader("🔎 Diagnóstico")
     try:
         secret_keys = list(st.secrets.keys())
         st.write("**Claves en secrets:**", ", ".join(secret_keys))
@@ -324,7 +379,6 @@ def diagnostics_page():
 
 # -------------------- Main --------------------
 def main():
-    # 1) Inicializar Firebase y warmup Firestore
     init_firebase()
     try:
         db = get_db()
@@ -334,10 +388,8 @@ def main():
         st.exception(e)
         st.stop()
 
-    # 2) Semilla de admin
     ensure_admin_seed(db)
 
-    # 3) Si no hay sesión, mostrar tabs: Ingresar / Registrarme
     user = get_current_user(db)
     if not user:
         tab_login, tab_signup = st.tabs(["Iniciar sesión", "Registrarme"])
@@ -347,22 +399,26 @@ def main():
             signup_form(db)
         st.stop()
 
-    # 4) UI principal
     header(user)
 
     # Menú contextual
     menu = []
+    if user.get("role") == "admin":
+        menu += ["Panel (admin)"]
+    if user.get("role") == "operador":
+        menu += ["Panel (operador)", "Comprobantes"]
     if user.get("role") in ["admin","operador"]:
-        menu.append("Crear convenio")
-        menu.append("Comprobantes")  # revisión de comprobantes (operador)
+        menu += ["Crear convenio"]
     menu += ["Mis convenios", "Mi contraseña"]
     if user.get("role") == "admin":
-        menu = ["Panel (admin)"] + menu + ["Usuarios (admin)", "Diagnóstico"]
+        menu += ["Usuarios (admin)", "Diagnóstico"]
 
     choice = st.sidebar.radio("Menú", menu)
 
     if choice == "Panel (admin)":
         admin_dashboard_page(db)
+    elif choice == "Panel (operador)":
+        operator_dashboard_page(db, user)
     elif choice == "Crear convenio":
         create_agreement_page(db, user)
     elif choice == "Comprobantes":
