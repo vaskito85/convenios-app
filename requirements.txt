@@ -1,5 +1,5 @@
-streamlit==1.40.1
-firebase-admin==6.5.0
-google-cloud-firestore==2.16.0
-requests==2.32.3
+streamlit
+firebase-admin
+google-cloud-firestore
+requests
 pytz==2024.2
