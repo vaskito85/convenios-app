@@ -113,4 +113,3 @@ def tpl_client_receipt_decision(ag_id: str, inst_num: int, decision: str, note: 
     <p>Detalle: {note or '(sin detalle)'}.</p>
     <p>Acceso: {app_url}</p>
     """
-``
