@@ -2,4 +2,4 @@ streamlit
 firebase-admin
 google-cloud-firestore
 requests
-pytz==2024.2
+pytz
