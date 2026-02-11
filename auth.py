@@ -1,7 +1,8 @@
+# auth.py
 import streamlit as st
 import requests
 from firebase_admin import auth as admin_auth
-from google.cloud import firestore
+from google.cloud import firestore  # solo para tipos y constantes
 
 def _api_key():
     return st.secrets["FIREBASE_WEB_API_KEY"]
@@ -35,7 +36,7 @@ def login_form(db: firestore.Client):
         uid = data["localId"]
         st.session_state["uid"] = uid
 
-        # Cargar documento o crearlo mínimo
+        # Crear doc mínimo si no existe
         user_doc = db.collection("users").document(uid).get()
         if not user_doc.exists:
             db.collection("users").document(uid).set({"email": email, "role": "cliente"})
@@ -44,12 +45,17 @@ def login_form(db: firestore.Client):
 
 def ensure_admin_seed(db: firestore.Client):
     """
-    Muestra un formulario para crear el admin SOLO si no existe ningún usuario.
-    Detiene la ejecución para evitar loops infinitos.
+    Si no hay usuarios, pide crear el admin y DETIENE la ejecución para evitar loops.
+    Incluye timeout y manejo de errores para que no quede colgado si Firestore no responde.
     """
-    users = list(db.collection("users").limit(1).stream())
+    try:
+        users = list(db.collection("users").limit(1).stream(retry=None, timeout=20))
+    except Exception as e:
+        st.error("No se pudo consultar Firestore para verificar usuarios (timeout o credenciales).")
+        st.exception(e)
+        st.stop()
 
-    # Si ya existe un usuario, todo OK
+    # Si ya existe un usuario, continuar
     if users:
         return
 
@@ -67,13 +73,11 @@ def ensure_admin_seed(db: firestore.Client):
             st.stop()
 
         user = admin_auth.create_user(email=email, password=pwd)
-
         db.collection("users").document(user.uid).set({
             "email": email,
             "full_name": name,
             "role": "admin"
         })
-
         st.success("Admin creado. Iniciá sesión con esas credenciales.")
         st.stop()
 
