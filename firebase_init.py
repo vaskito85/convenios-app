@@ -1,32 +1,25 @@
+# firebase_init.py
 import json
 import streamlit as st
 import firebase_admin
-from firebase_admin import credentials
-from google.cloud import firestore
+from firebase_admin import credentials, firestore as admin_firestore
 
 def init_firebase():
     """
     Inicializa Firebase de manera segura evitando doble inicialización.
     """
-    # Si Firebase ya está inicializado, no lo volvemos a hacer
     if firebase_admin._apps:
         return
 
-    # Leer JSON del secret (string)
-    raw_json = st.secrets["FIREBASE_CREDENTIALS"]
-
-    # Convertir JSON string -> dict
-    cred_dict = json.loads(raw_json)
-
-    # Crear credenciales del Admin SDK
+    # Leer JSON del secret (string) y convertir a dict
+    cred_dict = json.loads(st.secrets["FIREBASE_CREDENTIALS"])
     cred = credentials.Certificate(cred_dict)
 
-    # Inicializar app de Firebase
+    # Inicializar la app de Firebase con la credencial del Service Account
     firebase_admin.initialize_app(cred)
 
-def get_db() -> firestore.Client:
+def get_db():
     """
-    Retorna un cliente Firestore válido usando el project_id.
+    Devuelve un cliente Firestore usando el Admin SDK ya inicializado.
     """
-    project_id = st.secrets["FIREBASE_PROJECT_ID"]
-    return firestore.Client(project=project_id)
+    return admin_firestore.client()
