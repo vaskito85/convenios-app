@@ -1,20 +1,25 @@
 import streamlit as st
-from datetime import date, datetime
+from datetime import date
 from firebase_init import init_firebase, get_db
 from auth import ensure_admin_seed, login_form, get_current_user, role_badge, change_password
 from emailer import send_email
 from calculations import schedule_declining, schedule_french
 from google.cloud import firestore
+import firebase_admin
+import json
 
 st.set_page_config(page_title="Asistente de Convenios de Pago", page_icon="💳", layout="wide")
 
+# -------------------- UI helpers --------------------
 def header(user):
     left, right = st.columns([0.8, 0.2])
-    with left: st.markdown("### 💳 Asistente de Convenios de Pago")
+    with left:
+        st.markdown("### 💳 Asistente de Convenios de Pago")
     with right:
         st.caption(f"Conectado como **{user.get('full_name') or user.get('email')}** ({role_badge(user.get('role'))})")
         if st.button("Cerrar sesión"):
-            st.session_state.clear(); st.rerun()
+            st.session_state.clear()
+            st.rerun()
 
 def change_password_page(user):
     st.subheader("🔒 Cambiar contraseña")
@@ -29,6 +34,7 @@ def change_password_page(user):
             change_password(user["uid"], new)
             st.success("Contraseña actualizada.")
 
+# -------------------- Notificaciones por email --------------------
 def notify_agreement_sent(db, ag_ref):
     ag = ag_ref.get().to_dict()
     base_url = st.secrets.get("APP_BASE_URL", "https://example.com")
@@ -42,7 +48,8 @@ def notify_agreement_sent(db, ag_ref):
     op = db.collection("users").document(ag["operator_id"]).get().to_dict()
     cl = db.collection("users").document(ag["client_id"]).get().to_dict()
     for to in {op.get("email"), cl.get("email")}:
-        if to: send_email(to, subject, html)
+        if to:
+            send_email(to, subject, html)
 
 def notify_agreement_accepted(db, ag_ref):
     ag = ag_ref.get().to_dict()
@@ -57,8 +64,10 @@ def notify_agreement_accepted(db, ag_ref):
     op = db.collection("users").document(ag["operator_id"]).get().to_dict()
     cl = db.collection("users").document(ag["client_id"]).get().to_dict()
     for to in {op.get("email"), cl.get("email")}:
-        if to: send_email(to, subject, html)
+        if to:
+            send_email(to, subject, html)
 
+# -------------------- Convenios --------------------
 def create_agreement_page(db, user):
     st.subheader("🆕 Crear convenio")
     with st.form("create_agreement"):
@@ -75,11 +84,15 @@ def create_agreement_page(db, user):
 
     if ok:
         if not client_email or principal <= 0 or installments < 1:
-            st.error("Completá los datos obligatorios."); return
+            st.error("Completá los datos obligatorios.")
+            return
 
+        # Buscar/validar cliente en users
         client_doc = None
         q = db.collection("users").where("email", "==", client_email).limit(1).stream()
-        for d in q: client_doc = d; break
+        for d in q:
+            client_doc = d
+            break
 
         if client_doc is None:
             st.info("El cliente no existe en usuarios. Crealo desde 'Usuarios (admin)' o compartí el link para que se registre.")
@@ -100,11 +113,15 @@ def create_agreement_page(db, user):
 
 def generate_schedule(db, ag_ref):
     ag = ag_ref.get().to_dict()
-    for it in ag_ref.collection("installments").stream(): it.reference.delete()
+    # limpiar cuotas previas si existían
+    for it in ag_ref.collection("installments").stream():
+        it.reference.delete()
+    # calcular nuevas cuotas
     if ag["method"] == "declining":
         items = schedule_declining(ag["principal"], ag["interest_rate"], ag["installments"], date.fromisoformat(ag["start_date"]))
     else:
         items = schedule_french(ag["principal"], ag["interest_rate"], ag["installments"], date.fromisoformat(ag["start_date"]))
+    # batch write
     batch = db.batch()
     for it in items:
         doc_ref = ag_ref.collection("installments").document()
@@ -138,17 +155,24 @@ def admin_users_page(db, user):
         cols[2].write(role_badge(u.get("role")))
         if d.id != user["uid"] and cols[3].button("Eliminar", key=f"del_{d.id}"):
             from firebase_admin import auth as admin_auth
-            try: admin_auth.delete_user(d.id)
-            except Exception: pass
-            d.reference.delete(); st.warning("Usuario eliminado."); st.rerun()
+            try:
+                admin_auth.delete_user(d.id)
+            except Exception:
+                pass
+            d.reference.delete()
+            st.warning("Usuario eliminado.")
+            st.rerun()
 
 def list_agreements_page(db, user):
     st.subheader("📄 Mis convenios")
     role = user.get("role")
     col = db.collection("agreements")
-    if role == "operador": q = col.where("operator_id", "==", user["uid"])
-    elif role == "cliente": q = col.where("client_id", "==", user["uid"])
-    else: q = col
+    if role == "operador":
+        q = col.where("operator_id", "==", user["uid"])
+    elif role == "cliente":
+        q = col.where("client_id", "==", user["uid"])
+    else:
+        q = col
     agreements = list(q.stream())
 
     for doc in agreements:
@@ -158,20 +182,29 @@ def list_agreements_page(db, user):
                 f"**Deuda:** ${ag['principal']:,.2f} · **Interés:** {ag['interest_rate']*100:.2f}%/mes · "
                 f"**Cuotas:** {ag['installments']} · **Método:** {('Capital fijo' if ag['method']=='declining' else 'Francés')}"
             )
-            if ag.get("notes"): st.caption(ag["notes"])
+            if ag.get("notes"):
+                st.caption(ag["notes"])
 
             cols = st.columns(4)
             can_edit = (role in ["admin","operador"]) and ag["status"] in ["DRAFT","PENDING_ACCEPTANCE"]
             if can_edit and cols[0].button("Recalcular calendario", key=f"recalc_{doc.id}"):
-                generate_schedule(db, doc.reference); st.success("Calendario recalculado."); st.rerun()
+                generate_schedule(db, doc.reference)
+                st.success("Calendario recalculado.")
+                st.rerun()
             if can_edit and ag["status"] == "DRAFT" and cols[1].button("Enviar a aceptación", key=f"send_{doc.id}"):
-                doc.reference.update({"status": "PENDING_ACCEPTANCE"}); notify_agreement_sent(db, doc.reference)
-                st.success("Enviado a aceptación y notificado por email."); st.rerun()
+                doc.reference.update({"status": "PENDING_ACCEPTANCE"})
+                notify_agreement_sent(db, doc.reference)
+                st.success("Enviado a aceptación y notificado por email.")
+                st.rerun()
             if role in ["admin","operador"] and ag["status"] in ["DRAFT","PENDING_ACCEPTANCE"] and cols[2].button("Cancelar", key=f"cancel_{doc.id}"):
-                doc.reference.update({"status": "CANCELLED"}); st.info("Convenio cancelado."); st.rerun()
+                doc.reference.update({"status": "CANCELLED"})
+                st.info("Convenio cancelado.")
+                st.rerun()
             if role == "cliente" and ag["status"] == "PENDING_ACCEPTANCE" and cols[3].button("Aceptar convenio", key=f"accept_{doc.id}"):
                 doc.reference.update({"status":"ACTIVE","accepted_at":firestore.SERVER_TIMESTAMP})
-                st.success("Convenio aceptado. ¡Gracias!"); notify_agreement_accepted(db, doc.reference); st.rerun()
+                st.success("Convenio aceptado. ¡Gracias!")
+                notify_agreement_accepted(db, doc.reference)
+                st.rerun()
 
             st.write("#### Calendario de cuotas")
             items = list(doc.reference.collection("installments").order_by("number").stream())
@@ -189,36 +222,79 @@ def list_agreements_page(db, user):
                 for it in items:
                     data = it.to_dict()
                     c1, c2, c3, c4 = st.columns([0.2, 0.3, 0.3, 0.2])
-                    c1.write(f"Cuota {data['number']}"); c2.write(data["due_date"])
+                    c1.write(f"Cuota {data['number']}")
+                    c2.write(data["due_date"])
                     if not data["paid"] and c3.button("Marcar como pagada", key=f"paid_{doc.id}_{it.id}"):
                         it.reference.update({"paid": True, "paid_at": firestore.SERVER_TIMESTAMP})
-                        st.success(f"Cuota {data['number']} marcada como pagada."); st.rerun()
+                        st.success(f"Cuota {data['number']} marcada como pagada.")
+                        st.rerun()
                     if data["paid"] and c4.button("Desmarcar", key=f"unpaid_{doc.id}_{it.id}"):
                         it.reference.update({"paid": False, "paid_at": None})
-                        st.info(f"Cuota {data['number']} revertida a pendiente."); st.rerun()
+                        st.info(f"Cuota {data['number']} revertida a pendiente.")
+                        st.rerun()
 
-def user_label(db, uid: str) -> str:
-    d = db.collection("users").document(uid).get()
-    if not d.exists: return "(desconocido)"
-    u = d.to_dict(); return u.get("full_name") or u.get("email")
+# -------------------- Diagnóstico --------------------
+def diagnostics_page():
+    st.subheader("🔎 Diagnóstico de conexión")
+    # 1) Claves presentes (no mostramos valores)
+    try:
+        secret_keys = list(st.secrets.keys())
+        st.write("**Claves en secrets:**", ", ".join(secret_keys))
+    except Exception as e:
+        st.error(f"No se pudo leer st.secrets: {e}")
 
+    # 2) Estado Firebase Admin
+    try:
+        st.write("**Firebase inicializado:**", bool(firebase_admin._apps))
+    except Exception as e:
+        st.error(f"Error inspeccionando Firebase Admin: {e}")
+
+    # 3) Ping Firestore
+    try:
+        db = get_db()
+        test_ref = db.collection("health").document("ping")
+        test_ref.set({"ts": firestore.SERVER_TIMESTAMP})
+        doc = test_ref.get().to_dict()
+        st.success(f"Firestore OK. Documento de prueba: {doc}")
+    except Exception as e:
+        st.error(f"Error de Firestore: {e}")
+
+# -------------------- Main --------------------
 def main():
+    # 1) Inicializar Firebase y obtener DB
     init_firebase()
     db = get_db()
+
+    # 2) Semilla de admin (se detiene aquí si no hay usuarios)
     ensure_admin_seed(db)
+
+    # 3) Login / sesión
     user = get_current_user(db)
     if not user:
-        login_form(db); st.stop()
+        login_form(db)
+        st.stop()
+
+    # 4) UI principal
     header(user)
     items = []
-    if user.get("role") in ["admin","operador"]: items.append("Crear convenio")
-    items += ["Mis convenios","Mi contraseña"]
-    if user.get("role") == "admin": items.append("Usuarios (admin)")
+    if user.get("role") in ["admin","operador"]:
+        items.append("Crear convenio")
+    items += ["Mis convenios", "Mi contraseña", "Diagnóstico"]  # <- pestaña nueva
+    if user.get("role") == "admin":
+        items.append("Usuarios (admin)")
+
     choice = st.sidebar.radio("Menú", items)
-    if choice == "Crear convenio": create_agreement_page(db, user)
-    elif choice == "Mis convenios": list_agreements_page(db, user)
-    elif choice == "Mi contraseña": change_password_page(user)
-    elif choice == "Usuarios (admin)": admin_users_page(db, user)
+
+    if choice == "Crear convenio":
+        create_agreement_page(db, user)
+    elif choice == "Mis convenios":
+        list_agreements_page(db, user)
+    elif choice == "Mi contraseña":
+        change_password_page(user)
+    elif choice == "Usuarios (admin)":
+        admin_users_page(db, user)
+    elif choice == "Diagnóstico":
+        diagnostics_page()
 
 if __name__ == "__main__":
     main()
