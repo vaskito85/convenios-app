@@ -1,4 +1,3 @@
-# emailer.py
 import os, ssl, smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -126,4 +125,5 @@ def tpl_invite_new_client(email: str, convenio_title: str, app_url: str):
 Hola {email},
 Te han generado un convenio de pago: **{convenio_title}**.
 Para aceptarlo, ingresá a la plataforma. Si no tenés cuenta, podés crearla fácilmente.
-Acc
+Acceso: {app_url}
+"""
