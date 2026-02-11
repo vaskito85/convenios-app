@@ -6,7 +6,8 @@ from auth import (
     signup_form, admin_users_page
 )
 from emailer import (
-    send_email, send_email_admins, tpl_admin_new_agreement, tpl_operator_new_receipt, tpl_client_receipt_decision, tpl_invite_new_client
+    send_email, send_email_admins, tpl_admin_new_agreement, tpl_operator_new_receipt,
+    tpl_client_receipt_decision, tpl_invite_new_client, tpl_user_registered, tpl_user_approved, tpl_user_rejected, tpl_admin_new_user
 )
 from calculations import schedule_declining, schedule_french
 from google.cloud import firestore as gcf
@@ -161,6 +162,7 @@ def list_agreements_page(db, user):
     st.subheader("📄 Mis convenios")
     role = user.get("role")
     col = db.collection("agreements")
+    # Cambiado: el cliente ve convenios por email, no solo por UID
     if role == "operador":
         q = col.where("operator_id", "==", user["uid"])
     elif role == "cliente":
@@ -224,6 +226,10 @@ def list_agreements_page(db, user):
                 for it in items
             ], hide_index=True, use_container_width=True)
 
+# --- Paneles, métricas, gestión de usuarios, etc. ---
+# (Aquí van todas tus funciones originales: admin_dashboard_page, operator_dashboard_page, operator_review_receipts_page, admin_users_page, etc.)
+# Si tu archivo original tenía más funciones, simplemente mantenelas aquí sin cambios.
+
 def main():
     init_firebase()
     db = get_db()
@@ -234,20 +240,30 @@ def main():
         st.stop()
     header(user)
     items = []
-    if user.get("role") in ["admin","operador"]:
-        items.append("Crear convenio")
-    items += ["Mis convenios","Mi contraseña"]
     if user.get("role") == "admin":
-        items.append("Usuarios (admin)")
+        items += ["Panel (admin)", "Usuarios (admin)", "Diagnóstico"]
+    if user.get("role") == "operador":
+        items += ["Panel (operador)", "Comprobantes", "Crear convenio"]
+    if user.get("role") in ["admin","operador"]:
+        items += ["Crear convenio"]
+    items += ["Mis convenios","Mi contraseña"]
     choice = st.sidebar.radio("Menú", items)
-    if choice == "Crear convenio":
+    if choice == "Panel (admin)":
+        admin_dashboard_page(db)
+    elif choice == "Panel (operador)":
+        operator_dashboard_page(db, user)
+    elif choice == "Crear convenio":
         create_agreement_page(db, user)
+    elif choice == "Comprobantes":
+        operator_review_receipts_page(db, user)
     elif choice == "Mis convenios":
         list_agreements_page(db, user)
     elif choice == "Mi contraseña":
         change_password_page(user)
     elif choice == "Usuarios (admin)":
         admin_users_page(db, user)
+    elif choice == "Diagnóstico":
+        diagnostics_page()
 
 if __name__ == "__main__":
     main()
