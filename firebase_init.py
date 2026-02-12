@@ -1,28 +1,72 @@
-# firebase_init.py
 import json
-import streamlit as st
+import os
+from typing import Optional
 import firebase_admin
 from firebase_admin import credentials, firestore as admin_firestore, storage as admin_storage
 
-def init_firebase():
+try:
+    import streamlit as st
+except Exception:
+    st = None  # permitir uso fuera de Streamlit
+
+_DB = None
+_BUCKET = None
+
+def _get_secret(name: str, default=None):
+    if st is not None:
+        try:
+            val = st.secrets.get(name, None)
+            if val is not None:
+                return val
+        except Exception:
+            pass
+    return os.environ.get(name, default)
+
+def init_firebase() -> None:
     """
-    Inicializa Firebase de manera segura evitando doble inicialización.
-    Configura opcionalmente el bucket de Storage.
+    Inicializa Firebase Admin una sola vez.
+    Prioriza credenciales embebidas en secrets (FIREBASE_CREDENTIALS).
+    Si no están, intenta Application Default Credentials (ADC).
+    Configura bucket si está disponible.
     """
     if firebase_admin._apps:
         return
 
-    cred_dict = json.loads(st.secrets["FIREBASE_CREDENTIALS"])
-    cred = credentials.Certificate(cred_dict)
+    cred = None
+    cred_json = _get_secret("FIREBASE_CREDENTIALS")
+    project_id = _get_secret("FIREBASE_PROJECT_ID")
 
-    # Si tienes un bucket explícito en secrets, úsalo. Si no, usa <project_id>.appspot.com
-    bucket_name = st.secrets.get("FIREBASE_STORAGE_BUCKET", f'{st.secrets["FIREBASE_PROJECT_ID"]}.appspot.com')
-    firebase_admin.initialize_app(cred, {"storageBucket": bucket_name})
+    if cred_json:
+        if isinstance(cred_json, str):
+            cred_dict = json.loads(cred_json)
+        else:
+            cred_dict = cred_json
+        cred = credentials.Certificate(cred_dict)
+        if not project_id:
+            project_id = cred_dict.get("project_id")
+    else:
+        cred = credentials.ApplicationDefault()
+
+    bucket_name = _get_secret("FIREBASE_STORAGE_BUCKET")
+    if not bucket_name and project_id:
+        bucket_name = f"{project_id}.appspot.com"
+
+    opts = {}
+    if bucket_name:
+        opts["storageBucket"] = bucket_name
+
+    firebase_admin.initialize_app(cred, opts)
 
 def get_db():
-    """Devuelve cliente Firestore usando Admin SDK."""
-    return admin_firestore.client()
+    """Devuelve cliente Firestore (Admin SDK)."""
+    global _DB
+    if _DB is None:
+        _DB = admin_firestore.client()
+    return _DB
 
 def get_bucket():
-    """Devuelve el bucket de Firebase Storage configurado en la app Admin SDK."""
-    return admin_storage.bucket()
+    """Devuelve el bucket de Firebase Storage configurado."""
+    global _BUCKET
+    if _BUCKET is None:
+        _BUCKET = admin_storage.bucket()
+    return _BUCKET
