@@ -53,7 +53,7 @@ def settings_page(db):
     st.caption("Opciones globales de la aplicación (solo admin).")
     cfg = get_settings(db)
     interest_enabled = st.toggle("Habilitar interés en nuevos convenios", value=cfg["interest_enabled"])
-    if st.button("Guardar configuración"):
+    if st.button("Guardar configuración", key="btn_save_settings"):
         set_settings(db, interest_enabled)
         st.success("Configuración actualizada.")
         st.rerun()
@@ -66,7 +66,7 @@ def header(user):
         st.markdown("### 💳 Asistente de Convenios de Pago")
     with right:
         st.caption(f"Conectado como **{user.get('full_name') or user.get('email')}** ({role_badge(user.get('role'))})")
-    if st.button("Cerrar sesión"):
+    if st.button("Cerrar sesión", key="btn_logout"):
         st.session_state.clear()
         st.rerun()
 
@@ -177,15 +177,23 @@ def create_agreement_page(db, user):
         title = st.text_input("Título del convenio", value="Convenio de pago")
         notes = st.text_area("Notas / Descripción del origen de la deuda (opcional)")
         principal = st.number_input("Deuda (principal)", min_value=0.0, value=0.0, step=1000.0, format="%.2f")
-        # interés controlado por admin
+
+        # Interés: solo si está habilitado por admin
         if cfg["interest_enabled"]:
-            interest_pct = st.number_input("Interés mensual (%)", min_value=0.0, value=5.0, step=0.5, format="%.2f")
+            interest_pct = st.number_input(
+                "Interés mensual (%)",
+                min_value=0.0, value=5.0, step=0.5, format="%.2f", key="interest_pct_enabled"
+            )
+            method_options = ["Interés sobre saldo (capital fijo)", "Sistema francés (cuota fija)"]
         else:
             st.info("El administrador **deshabilitó el interés**. Se aplicará 0%.")
             interest_pct = 0.0
+            # Quitar opción de método que usa interés
+            method_options = ["Sistema francés (cuota fija)"]
 
         installments = st.number_input("Cantidad de cuotas", min_value=1, value=6, step=1)
-        method_label = st.selectbox("Método de cálculo", ["Interés sobre saldo (capital fijo)", "Sistema francés (cuota fija)"])
+        method_label = st.selectbox("Método de cálculo", method_options, key="method_select")
+
         start_date = st.date_input("Fecha de primera cuota", value=date.today())
 
         st.markdown("**Adjuntar documentación (opcional):**")
@@ -193,7 +201,7 @@ def create_agreement_page(db, user):
             "Soporte de deuda (PDF/JPG/PNG). Podés adjuntar varios archivos.",
             type=["pdf","jpg","jpeg","png"], accept_multiple_files=True
         )
-        ok = st.form_submit_button("Calcular y guardar borrador")
+        ok = st.form_submit_button("Calcular y guardar borrador", use_container_width=True)
 
         if ok:
             if not client_email or principal <= 0 or installments < 1:
@@ -283,8 +291,7 @@ def generate_schedule(db, ag_ref):
             "receipt_note": None
         })
     batch.commit()
-
-# ------------------ Helpers de pagos ------------------
+    # ------------------ Helpers de pagos ------------------
 
 def _mark_completed_if_all_paid(db, ag_doc):
     installments = list(ag_doc.reference.collection("installments").stream())
@@ -395,8 +402,7 @@ def operator_review_receipts_page(db, user):
                 count += 1
     if count == 0:
         st.info("No hay pagos/comprobantes pendientes de revisión.")
-
-# ------------------ PDF del convenio ------------------
+        # ------------------ PDF del convenio ------------------
 
 def _build_agreement_pdf(db, ag_doc) -> bytes:
     ag = ag_doc.to_dict()
@@ -470,7 +476,7 @@ def _build_agreement_pdf(db, ag_doc) -> bytes:
                     blob = bucket.blob(ad["path"])
                     img_bytes = blob.download_as_bytes()
                     img = Image(ImageReader(io.BytesIO(img_bytes)))
-                    img._restrictSize(14*cm, 10*cm)  # escala para no romper layout
+                    img._restrictSize(14*cm, 10*cm)
                     story.append(Spacer(1, 0.2*cm))
                     story.append(img)
                     story.append(Spacer(1, 0.2*cm))
@@ -495,8 +501,6 @@ def admin_dashboard_page(db):
     c1, c2 = st.columns(2)
     with c1:
         st.write("**Convenios por estado**")
-        # pintar estados con color
-        counts_colored = {k: counts[k] for k in states}
         for k in states:
             st.markdown(f"- {_status_badge_txt(k)}: **{counts[k]}**")
     total_sent = counts.get("PENDING_ACCEPTANCE",0) + counts.get("ACTIVE",0) + counts.get("COMPLETED",0)
@@ -654,14 +658,13 @@ def list_agreements_page(db, user):
                     try:
                         blob = get_bucket().blob(ad["path"])
                         url = blob.generate_signed_url(expiration=timedelta(minutes=15))
-                        row[1].markdown(f"[Descargar]({url})")
+                        row[1].markdown(f"{url}")
                     except Exception as e:
                         row[1].error(f"Error link: {e}")
 
             # ---- Calendario de cuotas (con totales)
             st.write("#### Calendario de cuotas")
             items = list(doc.reference.collection("installments").order_by("number").stream())
-            # totales
             sum_cap = sum(float(it.to_dict()["capital"]) for it in items)
             sum_int = sum(float(it.to_dict()["interest"]) for it in items)
             sum_tot = sum(float(it.to_dict()["total"]) for it in items)
@@ -677,7 +680,6 @@ def list_agreements_page(db, user):
                     "Total": f"${d['total']:,.2f}",
                     "Estado": _installment_state_badge(d)
                 })
-            # fila final de totales
             df_rows.append({
                 "N°": "",
                 "Vencimiento": "TOTAL",
@@ -736,16 +738,16 @@ def list_agreements_page(db, user):
 
             # ---- Descargar PDF
             st.write("#### Exportar")
-            if st.button("Generar PDF del convenio"):
+            if st.button("Generar PDF del convenio", key=f"generate_pdf_{doc.id}"):
                 pdf_bytes = _build_agreement_pdf(db, doc)
                 st.download_button(
                     "Descargar PDF",
                     data=pdf_bytes,
                     file_name=f"convenio_{doc.id}.pdf",
-                    mime="application/pdf"
+                    mime="application/pdf",
+                    key=f"download_pdf_{doc.id}"
                 )
-
-# ------------------ Diagnóstico ------------------
+                # ------------------ Diagnóstico ------------------
 
 def diagnostics_page():
     st.subheader("🔎 Diagnóstico")
@@ -804,7 +806,7 @@ def main():
     if user.get("role") == "admin":
         menu += ["Usuarios (admin)", "Diagnóstico"]
 
-    choice = st.sidebar.radio("Menú", menu)
+    choice = st.sidebar.radio("Menú", menu, key="menu_radio")
     if choice == "Panel (admin)":
         admin_dashboard_page(db)
     elif choice == "Panel (operador)":
