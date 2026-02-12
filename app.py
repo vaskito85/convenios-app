@@ -16,6 +16,10 @@ import traceback
 
 st.set_page_config(page_title="Asistente de Convenios de Pago", page_icon="💳", layout="wide")
 
+# Config validación de upload (comprobantes)
+MAX_MB = 10
+ALLOWED_MIME = {"application/pdf", "image/jpeg", "image/png"}
+
 # --- UI helpers ---
 def header(user):
     left, right = st.columns([0.8, 0.2])
@@ -73,7 +77,6 @@ El convenio fue aceptado y está activo. Podrás ver el calendario y registrar p
 Acceso: {base_url}
 """
     op = db.collection("users").document(ag["operator_id"]).get().to_dict()
-    cl = db.collection("users").document(ag["client_id"]).get().to_dict() if ag.get("client_id") else None
     for to in {op.get("email"), ag.get("client_email")}:
         if to:
             send_email(to, subject, html)
@@ -156,13 +159,43 @@ def generate_schedule(db, ag_ref):
         doc_ref = ag_ref.collection("installments").document()
         batch.set(doc_ref, {**it, "paid": False, "paid_at": None, "last_reminder_sent": None, "receipt_status": None, "receipt_url": None, "receipt_note": None})
     batch.commit()
-    # --- Comprobantes ---
+
+# --- helpers ---
+def _mark_completed_if_all_paid(db, ag_doc):
+    installments = list(ag_doc.reference.collection("installments").stream())
+    if installments and all(it.to_dict().get("paid") for it in installments):
+        ag_doc.reference.update({"status": "COMPLETED", "completed_at": gcf.SERVER_TIMESTAMP})
+        try:
+            ag = ag_doc.to_dict()
+            op = db.collection("users").document(ag["operator_id"]).get().to_dict()
+            cl_email = ag.get("client_email")
+            subj = f"Convenio #{ag_doc.id} completado"
+            base_url = st.secrets.get("APP_BASE_URL", "")
+            html = f"El convenio #{ag_doc.id} fue marcado como COMPLETADO. Acceso: {base_url}"
+            for to in filter(None, [op.get("email"), cl_email]):
+                send_email(to, subj, html)
+        except Exception:
+            pass
+
+# --- Comprobantes (opcional) ---
 def upload_receipt(db, ag_doc, inst_doc, user):
     st.write("**Subir comprobante (PDF/JPG/PNG, máx. ~10 MB)**")
     up = st.file_uploader("Archivo", type=["pdf","jpg","jpeg","png"], key=f"up_{inst_doc.id}")
+
+    # Validaciones básicas
+    if up:
+        size_mb = (up.size or 0) / (1024 * 1024)
+        if size_mb > MAX_MB:
+            st.error("El archivo excede el tamaño máximo (10 MB).")
+            return
+        if up.type not in ALLOWED_MIME:
+            st.error("Tipo de archivo no permitido.")
+            return
+
     if up and st.button("Cargar comprobante", key=f"btn_up_{inst_doc.id}"):
         bucket = get_bucket()
-        path = f"receipts/{ag_doc.id}/{inst_doc.id}/{up.name}"
+        safe_name = up.name.replace("/", "_")
+        path = f"receipts/{ag_doc.id}/{inst_doc.id}/{safe_name}"
         blob = bucket.blob(path)
         blob.upload_from_file(up, content_type=up.type)
         inst_doc.reference.update({
@@ -177,7 +210,7 @@ def upload_receipt(db, ag_doc, inst_doc, user):
         st.success("Comprobante cargado. Queda pendiente de revisión.")
 
 def operator_review_receipts_page(db, user):
-    st.subheader("🔎 Comprobantes pendientes")
+    st.subheader("🔎 Comprobantes/pagos pendientes de revisión")
     pending = db.collection("agreements").where("operator_id", "==", user["uid"]).stream()
     count = 0
     for ag_doc in pending:
@@ -186,42 +219,62 @@ def operator_review_receipts_page(db, user):
         items = list(items)
         if not items:
             continue
-        with st.expander(f"Convenio #{ag_doc.id} - {len(items)} comprobante(s) pendiente(s)"):
+        with st.expander(f"Convenio #{ag_doc.id} - {len(items)} elemento(s) pendiente(s)"):
             for inst in items:
                 d = inst.to_dict()
                 st.write(f"Cuota {d['number']} - Vence {d['due_date']} - Monto ${d['total']:,.2f}")
-                try:
-                    blob = get_bucket().blob(d["receipt_url"])
-                    url = blob.generate_signed_url(expiration=timedelta(minutes=15))
-                    st.markdown(f"{url}")
-                except Exception as e:
-                    st.error(f"No se pudo generar link de descarga: {e}")
+                # Mostrar link si hay archivo, sino avisar
+                if d.get("receipt_url"):
+                    try:
+                        blob = get_bucket().blob(d["receipt_url"])
+                        url = blob.generate_signed_url(expiration=timedelta(minutes=15))
+                        st.markdown(f"[Descargar comprobante]({url})")
+                    except Exception as e:
+                        st.error(f"No se pudo generar link de descarga: {e}")
+                else:
+                    st.info("Sin comprobante adjunto (declaración de pago manual).")
+
                 note = st.text_input("Observación (si rechazás)", key=f"note_{inst.id}")
                 c1, c2 = st.columns(2)
-                if c1.button("Aprobar", key=f"ap_{inst.id}"):
-                    inst.reference.update({"receipt_status": "APPROVED", "receipt_note": None, "paid": True, "paid_at": gcf.SERVER_TIMESTAMP})
-                    cl = db.collection("users").document(ag["client_id"]).get().to_dict()
-                    send_email(cl["email"], "Comprobante aprobado", tpl_client_receipt_decision(
+                if c1.button("Aprobar / Marcar pagada", key=f"ap_{inst.id}"):
+                    # Operador valida pago con o sin comprobante
+                    inst.reference.update({
+                        "receipt_status": "APPROVED",
+                        "receipt_note": None,
+                        "paid": True,
+                        "paid_at": gcf.SERVER_TIMESTAMP
+                    })
+                    cl_email = ag.get("client_email")
+                    if ag.get("client_id"):
+                        cl = db.collection("users").document(ag["client_id"]).get().to_dict()
+                        cl_email = (cl or {}).get("email") or cl_email
+                    send_email(cl_email, "Comprobante/pago aprobado", tpl_client_receipt_decision(
                         ag_doc.id, d["number"], "APROBADO", "", st.secrets.get("APP_BASE_URL","")
                     ))
-                    st.success("Comprobante aprobado y cuota marcada como pagada.")
+                    st.success("Pago aprobado y cuota marcada como pagada.")
+                    _mark_completed_if_all_paid(db, ag_doc)
                     st.rerun()
+
                 if c2.button("Rechazar", key=f"rj_{inst.id}"):
                     inst.reference.update({"receipt_status": "REJECTED", "receipt_note": note or ""})
-                    cl = db.collection("users").document(ag["client_id"]).get().to_dict()
-                    send_email(cl["email"], "Comprobante rechazado", tpl_client_receipt_decision(
+                    cl_email = ag.get("client_email")
+                    if ag.get("client_id"):
+                        cl = db.collection("users").document(ag["client_id"]).get().to_dict()
+                        cl_email = (cl or {}).get("email") or cl_email
+                    send_email(cl_email, "Comprobante/pago rechazado", tpl_client_receipt_decision(
                         ag_doc.id, d["number"], "RECHAZADO", note or "", st.secrets.get("APP_BASE_URL","")
                     ))
-                    st.warning("Comprobante rechazado.")
+                    st.warning("Pago/comprobante rechazado.")
                     st.rerun()
                 count += 1
     if count == 0:
-        st.info("No hay comprobantes pendientes.")
+        st.info("No hay elementos pendientes de revisión.")
 
 # --- Paneles ---
 def admin_dashboard_page(db):
     st.subheader("📊 Panel (admin) — métricas")
-    states = ["DRAFT","PENDING_ACCEPTANCE","ACTIVE","COMPLETED","CANCELLED"]
+    # Incluye REJECTED
+    states = ["DRAFT","PENDING_ACCEPTANCE","ACTIVE","COMPLETED","CANCELLED","REJECTED"]
     counts = {s:0 for s in states}
     agreements = list(db.collection("agreements").stream())
     for a in agreements:
@@ -261,7 +314,7 @@ def operator_dashboard_page(db, user):
     if not agreements:
         st.info("No tenés convenios asignados aún.")
         return
-    states = {"DRAFT":0,"PENDING_ACCEPTANCE":0,"ACTIVE":0,"COMPLETED":0,"CANCELLED":0}
+    states = {"DRAFT":0,"PENDING_ACCEPTANCE":0,"ACTIVE":0,"COMPLETED":0,"CANCELLED":0,"REJECTED":0}
     for a in agreements:
         states[a.to_dict().get("status","DRAFT")] += 1
     c1, c2 = st.columns(2)
@@ -286,8 +339,9 @@ def operator_dashboard_page(db, user):
     pend = 0
     for a in agreements:
         pend += len(list(a.reference.collection("installments").where("receipt_status","==","PENDING").stream()))
-    st.write(f"**Comprobantes pendientes de revisar**: {pend}")
-    # --- Listado con eliminación admin ---
+    st.write(f"**Pagos/comprobantes pendientes de revisar**: {pend}")
+
+# --- Listado con acciones por rol ---
 def list_agreements_page(db, user):
     st.subheader("📄 Mis convenios")
     role = user.get("role")
@@ -295,6 +349,7 @@ def list_agreements_page(db, user):
     if role == "operador":
         q = col.where("operator_id", "==", user["uid"])
     elif role == "cliente":
+        # mostramos por email (fallback) y, si existiera client_id, igual aparecerá
         q = col.where("client_email", "==", user["email"])
     else:
         q = col
@@ -309,6 +364,7 @@ def list_agreements_page(db, user):
             )
             if ag.get("notes"):
                 st.caption(ag["notes"])
+
             cols = st.columns(5 if role=="admin" else 4)
             can_edit = (role in ["admin","operador"]) and ag["status"] in ["DRAFT","PENDING_ACCEPTANCE"]
             if can_edit and cols[0].button("Recalcular calendario", key=f"recalc_{doc.id}"):
@@ -357,6 +413,8 @@ def list_agreements_page(db, user):
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"No se pudo eliminar: {e}")
+
+            # Calendario de cuotas
             st.write("#### Calendario de cuotas")
             items = list(doc.reference.collection("installments").order_by("number").stream())
             st.dataframe([
@@ -370,14 +428,57 @@ def list_agreements_page(db, user):
                 }
                 for it in items
             ], hide_index=True, use_container_width=True)
+
+            # Acciones por rol sobre cada cuota
             if role == "cliente":
+                st.info("Podés subir un comprobante o marcar la cuota como pagada sin comprobante. Quedará pendiente de revisión por el operador.")
                 for it in items:
                     d = it.to_dict()
                     if not d.get("paid") and d.get("receipt_status") != "APPROVED":
                         st.write(f"**Cuota {d['number']}** — Estado: {d.get('receipt_status') or 'SIN COMPROBANTE'}")
+                        # Subida opcional
                         upload_receipt(db, doc, it, user)
+                        # NUEVO: Declarar pagada sin comprobante
+                        if st.button(f"Marcar pagada sin comprobante (envía a revisión) — Cuota {d['number']}", key=f"manual_paid_{it.id}"):
+                            it.reference.update({
+                                "receipt_status": "PENDING",
+                                "receipt_note": "Declaración de pago sin comprobante",
+                                "receipt_uploaded_by": user["uid"],
+                                "receipt_uploaded_at": gcf.SERVER_TIMESTAMP
+                            })
+                            # Notificar operador
+                            op = db.collection("users").document(ag["operator_id"]).get().to_dict()
+                            send_email(op.get("email"), "Pago declarado sin comprobante",
+                                       tpl_operator_new_receipt(doc.id, d["number"], user.get("email"), st.secrets.get("APP_BASE_URL","")))
+                            st.success("Pago declarado. Queda pendiente de revisión del operador.")
+                            st.rerun()
+
             if role == "operador":
-                st.info("Para revisar comprobantes pendientes, usá el menú: Comprobantes")
+                st.info("Acciones rápidas: marcar pagada/revertir (con o sin comprobante).")
+                for it in items:
+                    d = it.to_dict()
+                    c1, c2, c3 = st.columns([0.25, 0.25, 0.5])
+                    c1.write(f"Cuota {d['number']}")
+                    c2.write(f"Vence {d['due_date']}")
+                    if not d.get("paid"):
+                        if c3.button(f"Marcar como pagada — {d['number']}", key=f"op_paid_{doc.id}_{it.id}"):
+                            it.reference.update({
+                                "paid": True,
+                                "paid_at": gcf.SERVER_TIMESTAMP,
+                                "receipt_status": d.get("receipt_status") or "APPROVED",  # si no había flujo de recibo, se aprueba manual
+                                "receipt_note": None if d.get("receipt_status") == "APPROVED" else "Aprobación manual sin comprobante"
+                            })
+                            st.success(f"Cuota {d['number']} marcada como pagada.")
+                            _mark_completed_if_all_paid(db, doc)
+                            st.rerun()
+                    else:
+                        if c3.button(f"Revertir a pendiente — {d['number']}", key=f"op_unpaid_{doc.id}_{it.id}"):
+                            it.reference.update({"paid": False, "paid_at": None})
+                            st.info(f"Cuota {d['number']} revertida a pendiente.")
+                            st.rerun()
+
+            if role == "operador":
+                st.info("Para revisar pagos/comprobantes PENDIENTES, usá el menú: **Comprobantes**.")
 
 # --- Diagnóstico (solo admin) ---
 def diagnostics_page():
