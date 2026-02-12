@@ -1,4 +1,6 @@
+import io
 import streamlit as st
+import pandas as pd
 from datetime import date, timedelta
 from firebase_init import init_firebase, get_db, get_bucket
 from auth import (
@@ -14,13 +16,50 @@ from google.cloud import firestore as gcf
 import firebase_admin
 import traceback
 
+# PDF: reportlab
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.units import cm
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.utils import ImageReader
+
 st.set_page_config(page_title="Asistente de Convenios de Pago", page_icon="💳", layout="wide")
 
-# Config validación de upload (comprobantes)
+# Config validación de upload (comprobantes y adjuntos del convenio)
 MAX_MB = 10
 ALLOWED_MIME = {"application/pdf", "image/jpeg", "image/png"}
 
-# --- UI helpers ---
+# ------------------ Configuración (admin) ------------------
+
+def get_settings(db):
+    doc = db.collection("config").document("settings").get()
+    if doc.exists:
+        data = doc.to_dict() or {}
+        return {
+            "interest_enabled": bool(data.get("interest_enabled", False))
+        }
+    # defaults
+    return {"interest_enabled": False}
+
+def set_settings(db, interest_enabled: bool):
+    db.collection("config").document("settings").set(
+        {"interest_enabled": bool(interest_enabled)},
+        merge=True
+    )
+
+def settings_page(db):
+    st.subheader("⚙️ Configuración")
+    st.caption("Opciones globales de la aplicación (solo admin).")
+    cfg = get_settings(db)
+    interest_enabled = st.toggle("Habilitar interés en nuevos convenios", value=cfg["interest_enabled"])
+    if st.button("Guardar configuración"):
+        set_settings(db, interest_enabled)
+        st.success("Configuración actualizada.")
+        st.rerun()
+
+# ------------------ UI helpers ------------------
+
 def header(user):
     left, right = st.columns([0.8, 0.2])
     with left:
@@ -44,7 +83,35 @@ def change_password_page(user):
                 change_password(user["uid"], new)
                 st.success("Contraseña actualizada.")
 
-# --- Convenios y notificaciones ---
+def _status_badge_txt(status: str) -> str:
+    """
+    Devuelve texto con color de Streamlit para estados de convenio.
+    """
+    s = (status or "").upper()
+    if s in {"PENDING_ACCEPTANCE"}:
+        return f":orange[{status}]"
+    if s in {"REJECTED"}:
+        return f":red[{status}]"
+    if s in {"ACTIVE", "COMPLETED"}:
+        return f":green[{status}]"
+    if s in {"CANCELLED"}:
+        return f":gray[{status}]"
+    return status
+
+def _installment_state_badge(d: dict) -> str:
+    if d.get("paid"):
+        return "🟢 PAGADA"
+    rs = (d.get("receipt_status") or "").upper()
+    if rs == "PENDING":
+        return "🟠 PENDIENTE"
+    if rs == "REJECTED":
+        return "🔴 RECHAZADO"
+    if rs == "APPROVED":
+        return "🟢 APROBADO"
+    return "PENDIENTE"
+
+# ------------------ Notificaciones ------------------
+
 def notify_agreement_sent(db, ag_ref):
     ag = ag_ref.get().to_dict()
     base_url = st.secrets.get("APP_BASE_URL", "https://example.com")
@@ -59,11 +126,13 @@ Cuotas: {ag['installments']}
 Ingresá a la app para revisarlo y aceptarlo: {base_url}
 """
     op = db.collection("users").document(ag["operator_id"]).get().to_dict()
-    cl = db.collection("users").document(ag["client_id"]).get().to_dict() if ag.get("client_id") else None
     for to in {op.get("email"), ag.get("client_email")}:
         if to:
             send_email(to, subject, html)
-    send_email_admins("Nuevo convenio creado", tpl_admin_new_agreement(ag_ref.id, op.get("email"), ag.get("client_email"), base_url))
+    send_email_admins(
+        "Nuevo convenio creado",
+        tpl_admin_new_agreement(ag_ref.id, op.get("email"), ag.get("client_email"), base_url)
+    )
 
 def notify_agreement_accepted(db, ag_ref):
     ag = ag_ref.get().to_dict()
@@ -97,23 +166,51 @@ Ingresá a la app para revisar o crear un nuevo convenio: {base_url}
         if to:
             send_email(to, subject, html)
 
+# ------------------ Crear convenio (operador) ------------------
+
 def create_agreement_page(db, user):
     st.subheader("🆕 Crear convenio")
+    cfg = get_settings(db)
     with st.form("create_agreement"):
         client_email = st.text_input("Email del cliente").strip().lower()
         client_name = st.text_input("Nombre del cliente (opcional)")
         title = st.text_input("Título del convenio", value="Convenio de pago")
-        notes = st.text_area("Notas (opcional)")
+        notes = st.text_area("Notas / Descripción del origen de la deuda (opcional)")
         principal = st.number_input("Deuda (principal)", min_value=0.0, value=0.0, step=1000.0, format="%.2f")
-        interest_pct = st.number_input("Interés mensual (%)", min_value=0.0, value=5.0, step=0.5, format="%.2f")
+        # interés controlado por admin
+        if cfg["interest_enabled"]:
+            interest_pct = st.number_input("Interés mensual (%)", min_value=0.0, value=5.0, step=0.5, format="%.2f")
+        else:
+            st.info("El administrador **deshabilitó el interés**. Se aplicará 0%.")
+            interest_pct = 0.0
+
         installments = st.number_input("Cantidad de cuotas", min_value=1, value=6, step=1)
         method_label = st.selectbox("Método de cálculo", ["Interés sobre saldo (capital fijo)", "Sistema francés (cuota fija)"])
         start_date = st.date_input("Fecha de primera cuota", value=date.today())
+
+        st.markdown("**Adjuntar documentación (opcional):**")
+        attach_files = st.file_uploader(
+            "Soporte de deuda (PDF/JPG/PNG). Podés adjuntar varios archivos.",
+            type=["pdf","jpg","jpeg","png"], accept_multiple_files=True
+        )
         ok = st.form_submit_button("Calcular y guardar borrador")
+
         if ok:
             if not client_email or principal <= 0 or installments < 1:
                 st.error("Completá los datos obligatorios.")
                 return
+
+            # Validaciones básicas de adjuntos
+            if attach_files:
+                for f in attach_files:
+                    size_mb = (f.size or 0) / (1024 * 1024)
+                    if size_mb > MAX_MB:
+                        st.error(f"El archivo '{f.name}' excede {MAX_MB} MB.")
+                        return
+                    if f.type not in ALLOWED_MIME:
+                        st.error(f"Tipo de archivo no permitido en '{f.name}'.")
+                        return
+
             client_doc = None
             q = db.collection("users").where("email", "==", client_email).limit(1).stream()
             for d in q:
@@ -129,7 +226,7 @@ def create_agreement_page(db, user):
                 "client_id": client_doc.id if client_doc else None,
                 "client_email": client_email,
                 "principal": round(principal, 2),
-                "interest_rate": round(interest_pct/100.0, 6),
+                "interest_rate": round(interest_pct/100.0, 6) if cfg["interest_enabled"] else 0.0,
                 "installments": int(installments),
                 "method": method,
                 "status": "DRAFT",
@@ -137,13 +234,32 @@ def create_agreement_page(db, user):
                 "start_date": start_date.strftime("%Y-%m-%d")
             })
             generate_schedule(db, ag_ref)
+
+            # Subir adjuntos (si los hay)
+            if attach_files:
+                bucket = get_bucket()
+                for f in attach_files:
+                    safe_name = f.name.replace("/", "_")
+                    path = f"agreements/{ag_ref.id}/attachments/{safe_name}"
+                    blob = bucket.blob(path)
+                    blob.upload_from_file(f, content_type=f.type)
+                    ag_ref.collection("attachments").document().set({
+                        "name": safe_name,
+                        "path": path,
+                        "content_type": f.type,
+                        "size": f.size,
+                        "uploaded_by": user["uid"],
+                        "uploaded_at": gcf.SERVER_TIMESTAMP
+                    })
+
             # Enviar invitación si el usuario no existe
             if client_doc is None:
                 base_url = st.secrets.get("APP_BASE_URL", "https://example.com")
                 subject = "Nuevo convenio pendiente de aceptación"
                 html = tpl_invite_new_client(client_email, title, base_url)
                 send_email(client_email, subject, html)
-            st.success("Convenio guardado en borrador con su calendario de cuotas.")
+
+            st.success("Convenio guardado en borrador con su calendario de cuotas y documentación (si adjuntaste).")
             st.rerun()
 
 def generate_schedule(db, ag_ref):
@@ -157,10 +273,19 @@ def generate_schedule(db, ag_ref):
     batch = db.batch()
     for it in items:
         doc_ref = ag_ref.collection("installments").document()
-        batch.set(doc_ref, {**it, "paid": False, "paid_at": None, "last_reminder_sent": None, "receipt_status": None, "receipt_url": None, "receipt_note": None})
+        batch.set(doc_ref, {
+            **it,
+            "paid": False,
+            "paid_at": None,
+            "last_reminder_sent": None,
+            "receipt_status": None,
+            "receipt_url": None,
+            "receipt_note": None
+        })
     batch.commit()
 
-# --- helpers ---
+# ------------------ Helpers de pagos ------------------
+
 def _mark_completed_if_all_paid(db, ag_doc):
     installments = list(ag_doc.reference.collection("installments").stream())
     if installments and all(it.to_dict().get("paid") for it in installments):
@@ -177,9 +302,10 @@ def _mark_completed_if_all_paid(db, ag_doc):
         except Exception:
             pass
 
-# --- Comprobantes (opcional) ---
+# ------------------ Comprobantes (cliente) ------------------
+
 def upload_receipt(db, ag_doc, inst_doc, user):
-    st.write("**Subir comprobante (PDF/JPG/PNG, máx. ~10 MB)**")
+    st.write("**Subir comprobante (PDF/JPG/PNG, máx. ~10 MB).**")
     up = st.file_uploader("Archivo", type=["pdf","jpg","jpeg","png"], key=f"up_{inst_doc.id}")
 
     # Validaciones básicas
@@ -204,13 +330,15 @@ def upload_receipt(db, ag_doc, inst_doc, user):
         })
         ag = ag_doc.to_dict()
         op = db.collection("users").document(ag["operator_id"]).get().to_dict()
-        send_email(op["email"], "Nuevo comprobante subido", tpl_operator_new_receipt(
+        send_email(op["email"], "Nuevo comprobante/pago declarado", tpl_operator_new_receipt(
             ag_doc.id, inst_doc.to_dict()["number"], user.get("email"), st.secrets.get("APP_BASE_URL","")
         ))
         st.success("Comprobante cargado. Queda pendiente de revisión.")
 
+# ------------------ Revisión operador ------------------
+
 def operator_review_receipts_page(db, user):
-    st.subheader("🔎 Comprobantes/pagos pendientes de revisión")
+    st.subheader("🔎 Pagos/comprobantes pendientes de revisión")
     pending = db.collection("agreements").where("operator_id", "==", user["uid"]).stream()
     count = 0
     for ag_doc in pending:
@@ -223,12 +351,11 @@ def operator_review_receipts_page(db, user):
             for inst in items:
                 d = inst.to_dict()
                 st.write(f"Cuota {d['number']} - Vence {d['due_date']} - Monto ${d['total']:,.2f}")
-                # Mostrar link si hay archivo, sino avisar
                 if d.get("receipt_url"):
                     try:
                         blob = get_bucket().blob(d["receipt_url"])
                         url = blob.generate_signed_url(expiration=timedelta(minutes=15))
-                        st.markdown(f"[Descargar comprobante]({url})")
+                        st.markdown(f"{url}")
                     except Exception as e:
                         st.error(f"No se pudo generar link de descarga: {e}")
                 else:
@@ -237,7 +364,6 @@ def operator_review_receipts_page(db, user):
                 note = st.text_input("Observación (si rechazás)", key=f"note_{inst.id}")
                 c1, c2 = st.columns(2)
                 if c1.button("Aprobar / Marcar pagada", key=f"ap_{inst.id}"):
-                    # Operador valida pago con o sin comprobante
                     inst.reference.update({
                         "receipt_status": "APPROVED",
                         "receipt_note": None,
@@ -248,7 +374,7 @@ def operator_review_receipts_page(db, user):
                     if ag.get("client_id"):
                         cl = db.collection("users").document(ag["client_id"]).get().to_dict()
                         cl_email = (cl or {}).get("email") or cl_email
-                    send_email(cl_email, "Comprobante/pago aprobado", tpl_client_receipt_decision(
+                    send_email(cl_email, "Pago aprobado", tpl_client_receipt_decision(
                         ag_doc.id, d["number"], "APROBADO", "", st.secrets.get("APP_BASE_URL","")
                     ))
                     st.success("Pago aprobado y cuota marcada como pagada.")
@@ -261,19 +387,105 @@ def operator_review_receipts_page(db, user):
                     if ag.get("client_id"):
                         cl = db.collection("users").document(ag["client_id"]).get().to_dict()
                         cl_email = (cl or {}).get("email") or cl_email
-                    send_email(cl_email, "Comprobante/pago rechazado", tpl_client_receipt_decision(
+                    send_email(cl_email, "Pago rechazado", tpl_client_receipt_decision(
                         ag_doc.id, d["number"], "RECHAZADO", note or "", st.secrets.get("APP_BASE_URL","")
                     ))
-                    st.warning("Pago/comprobante rechazado.")
+                    st.warning("Pago rechazado.")
                     st.rerun()
                 count += 1
     if count == 0:
-        st.info("No hay elementos pendientes de revisión.")
+        st.info("No hay pagos/comprobantes pendientes de revisión.")
 
-# --- Paneles ---
+# ------------------ PDF del convenio ------------------
+
+def _build_agreement_pdf(db, ag_doc) -> bytes:
+    ag = ag_doc.to_dict()
+    items = list(ag_doc.reference.collection("installments").order_by("number").stream())
+    rows = [["N°", "Vencimiento", "Capital", "Interés", "Total"]]
+
+    sum_cap = 0.0
+    sum_int = 0.0
+    sum_tot = 0.0
+    for it in items:
+        d = it.to_dict()
+        sum_cap += float(d["capital"])
+        sum_int += float(d["interest"])
+        sum_tot += float(d["total"])
+        rows.append([
+            str(d["number"]),
+            d["due_date"],
+            f"${d['capital']:,.2f}",
+            f"${d['interest']:,.2f}",
+            f"${d['total']:,.2f}",
+        ])
+    rows.append(["", "TOTAL", f"${sum_cap:,.2f}", f"${sum_int:,.2f}", f"${sum_tot:,.2f}"])
+
+    # Attachments
+    atts = list(ag_doc.reference.collection("attachments").stream())
+
+    # ReportLab build
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
+    story = []
+    styles = getSampleStyleSheet()
+
+    story.append(Paragraph(f"Convenio #{ag_doc.id}", styles["Title"]))
+    story.append(Spacer(1, 0.2*cm))
+    story.append(Paragraph(f"Cliente: {ag.get('client_email','')}", styles["Normal"]))
+    story.append(Paragraph(f"Operador: {ag.get('operator_id','')}", styles["Normal"]))
+    story.append(Paragraph(f"Título: {ag.get('title','')}", styles["Normal"]))
+    story.append(Paragraph(f"Notas: {ag.get('notes','') or '-'}", styles["Normal"]))
+    story.append(Paragraph(f"Principal: ${ag['principal']:,.2f}", styles["Normal"]))
+    story.append(Paragraph(f"Interés mensual aplicado: {ag['interest_rate']*100:.2f}%", styles["Normal"]))
+    story.append(Paragraph(f"Cuotas: {ag['installments']} — Método: {'Capital fijo' if ag['method']=='declining' else 'Francés'}", styles["Normal"]))
+    story.append(Paragraph(f"Inicio: {ag.get('start_date','')}", styles["Normal"]))
+    story.append(Spacer(1, 0.5*cm))
+
+    story.append(Paragraph("Calendario de cuotas", styles["Heading2"]))
+    tbl = Table(rows, colWidths=[1.5*cm, 3.0*cm, 3.0*cm, 3.0*cm, 3.0*cm])
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
+        ("GRID", (0,0), (-1,-1), 0.25, colors.grey),
+        ("ALIGN", (2,1), (-1,-2), "RIGHT"),
+        ("ALIGN", (0,0), (-1,0), "CENTER"),
+        ("BACKGROUND", (0,-1), (-1,-1), colors.whitesmoke),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTNAME", (1,-1), (-1,-1), "Helvetica-Bold"),
+    ]))
+    story.append(tbl)
+    story.append(Spacer(1, 0.5*cm))
+
+    story.append(Paragraph("Documentación adjunta", styles["Heading2"]))
+    if not atts:
+        story.append(Paragraph("No hay adjuntos.", styles["Normal"]))
+    else:
+        bucket = get_bucket()
+        for a in atts:
+            ad = a.to_dict()
+            story.append(Paragraph(f"- {ad.get('name')} ({ad.get('content_type','')})", styles["Normal"]))
+            # Insertar imágenes como preview (si son JPG/PNG)
+            ctype = (ad.get("content_type") or "").lower()
+            if ctype.startswith("image/"):
+                try:
+                    blob = bucket.blob(ad["path"])
+                    img_bytes = blob.download_as_bytes()
+                    img = Image(ImageReader(io.BytesIO(img_bytes)))
+                    img._restrictSize(14*cm, 10*cm)  # escala para no romper layout
+                    story.append(Spacer(1, 0.2*cm))
+                    story.append(img)
+                    story.append(Spacer(1, 0.2*cm))
+                except Exception:
+                    pass
+
+    doc.build(story)
+    pdf = buffer.getvalue()
+    buffer.close()
+    return pdf
+
+# ------------------ Paneles ------------------
+
 def admin_dashboard_page(db):
     st.subheader("📊 Panel (admin) — métricas")
-    # Incluye REJECTED
     states = ["DRAFT","PENDING_ACCEPTANCE","ACTIVE","COMPLETED","CANCELLED","REJECTED"]
     counts = {s:0 for s in states}
     agreements = list(db.collection("agreements").stream())
@@ -283,7 +495,10 @@ def admin_dashboard_page(db):
     c1, c2 = st.columns(2)
     with c1:
         st.write("**Convenios por estado**")
-        st.json(counts)
+        # pintar estados con color
+        counts_colored = {k: counts[k] for k in states}
+        for k in states:
+            st.markdown(f"- {_status_badge_txt(k)}: **{counts[k]}**")
     total_sent = counts.get("PENDING_ACCEPTANCE",0) + counts.get("ACTIVE",0) + counts.get("COMPLETED",0)
     accepted = counts.get("ACTIVE",0) + counts.get("COMPLETED",0)
     rate = (accepted / total_sent * 100) if total_sent else 0
@@ -320,7 +535,8 @@ def operator_dashboard_page(db, user):
     c1, c2 = st.columns(2)
     with c1:
         st.write("**Mis convenios por estado**")
-        st.json(states)
+        for k,v in states.items():
+            st.markdown(f"- {_status_badge_txt(k)}: **{v}**")
     total_sent = states["PENDING_ACCEPTANCE"] + states["ACTIVE"] + states["COMPLETED"]
     accepted = states["ACTIVE"] + states["COMPLETED"]
     rate = (accepted/total_sent*100) if total_sent else 0
@@ -341,7 +557,8 @@ def operator_dashboard_page(db, user):
         pend += len(list(a.reference.collection("installments").where("receipt_status","==","PENDING").stream()))
     st.write(f"**Pagos/comprobantes pendientes de revisar**: {pend}")
 
-# --- Listado con acciones por rol ---
+# ------------------ Listado y acciones ------------------
+
 def list_agreements_page(db, user):
     st.subheader("📄 Mis convenios")
     role = user.get("role")
@@ -349,15 +566,16 @@ def list_agreements_page(db, user):
     if role == "operador":
         q = col.where("operator_id", "==", user["uid"])
     elif role == "cliente":
-        # mostramos por email (fallback) y, si existiera client_id, igual aparecerá
         q = col.where("client_email", "==", user["email"])
     else:
         q = col
     agreements = list(q.stream())
+
     for doc in agreements:
         ag = doc.to_dict()
         title = ag.get('title','(sin título)')
-        with st.expander(f"[{doc.id}] {title} · {ag.get('status')}"):
+        status_colored = _status_badge_txt(ag.get('status'))
+        with st.expander(f"[{doc.id}] {title} · {status_colored}"):
             st.write(
                 f"**Deuda:** ${ag['principal']:,.2f} · **Interés:** {ag['interest_rate']*100:.2f}%/mes · "
                 f"**Cuotas:** {ag['installments']} · **Método:** {'Capital fijo' if ag['method']=='declining' else 'Francés'}"
@@ -365,7 +583,8 @@ def list_agreements_page(db, user):
             if ag.get("notes"):
                 st.caption(ag["notes"])
 
-            cols = st.columns(5 if role=="admin" else 4)
+            # ---- Botones de acciones por estado y rol
+            cols = st.columns(6 if role=="admin" else 5)
             can_edit = (role in ["admin","operador"]) and ag["status"] in ["DRAFT","PENDING_ACCEPTANCE"]
             if can_edit and cols[0].button("Recalcular calendario", key=f"recalc_{doc.id}"):
                 generate_schedule(db, doc.reference)
@@ -408,64 +627,102 @@ def list_agreements_page(db, user):
                                         except Exception:
                                             pass
                                     it.reference.delete()
+                                # borrar adjuntos
+                                for a in doc.reference.collection("attachments").stream():
+                                    ad = a.to_dict()
+                                    try:
+                                        get_bucket().blob(ad.get("path","")).delete()
+                                    except Exception:
+                                        pass
+                                    a.reference.delete()
                                 doc.reference.delete()
                                 st.success("Convenio eliminado.")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"No se pudo eliminar: {e}")
 
-            # Calendario de cuotas
+            # ---- Adjuntos visibles para todos
+            st.write("#### Documentación adjunta")
+            atts = list(doc.reference.collection("attachments").stream())
+            if not atts:
+                st.info("No hay documentación adjunta.")
+            else:
+                for a in atts:
+                    ad = a.to_dict()
+                    row = st.columns([0.6, 0.4])
+                    row[0].write(f"{ad.get('name')}  ·  {ad.get('content_type','')}")
+                    try:
+                        blob = get_bucket().blob(ad["path"])
+                        url = blob.generate_signed_url(expiration=timedelta(minutes=15))
+                        row[1].markdown(f"[Descargar]({url})")
+                    except Exception as e:
+                        row[1].error(f"Error link: {e}")
+
+            # ---- Calendario de cuotas (con totales)
             st.write("#### Calendario de cuotas")
             items = list(doc.reference.collection("installments").order_by("number").stream())
-            st.dataframe([
-                {
-                    "N°": it.to_dict()["number"],
-                    "Vencimiento": it.to_dict()["due_date"],
-                    "Capital": f"${it.to_dict()['capital']:,.2f}",
-                    "Interés": f"${it.to_dict()['interest']:,.2f}",
-                    "Total": f"${it.to_dict()['total']:,.2f}",
-                    "Estado": "PAGADA" if it.to_dict()["paid"] else (it.to_dict().get("receipt_status") or "PENDIENTE")
-                }
-                for it in items
-            ], hide_index=True, use_container_width=True)
+            # totales
+            sum_cap = sum(float(it.to_dict()["capital"]) for it in items)
+            sum_int = sum(float(it.to_dict()["interest"]) for it in items)
+            sum_tot = sum(float(it.to_dict()["total"]) for it in items)
 
-            # Acciones por rol sobre cada cuota
+            df_rows = []
+            for it in items:
+                d = it.to_dict()
+                df_rows.append({
+                    "N°": d["number"],
+                    "Vencimiento": d["due_date"],
+                    "Capital": f"${d['capital']:,.2f}",
+                    "Interés": f"${d['interest']:,.2f}",
+                    "Total": f"${d['total']:,.2f}",
+                    "Estado": _installment_state_badge(d)
+                })
+            # fila final de totales
+            df_rows.append({
+                "N°": "",
+                "Vencimiento": "TOTAL",
+                "Capital": f"${sum_cap:,.2f}",
+                "Interés": f"${sum_int:,.2f}",
+                "Total": f"${sum_tot:,.2f}",
+                "Estado": ""
+            })
+            df = pd.DataFrame(df_rows)
+            st.dataframe(df, hide_index=True, use_container_width=True)
+
+            # ---- Acciones por rol sobre cuotas
             if role == "cliente":
-                st.info("Podés subir un comprobante o marcar la cuota como pagada sin comprobante. Quedará pendiente de revisión por el operador.")
+                st.info("Podés subir un comprobante o **marcar pagada sin comprobante**; quedará pendiente de revisión.")
                 for it in items:
                     d = it.to_dict()
                     if not d.get("paid") and d.get("receipt_status") != "APPROVED":
                         st.write(f"**Cuota {d['number']}** — Estado: {d.get('receipt_status') or 'SIN COMPROBANTE'}")
-                        # Subida opcional
                         upload_receipt(db, doc, it, user)
-                        # NUEVO: Declarar pagada sin comprobante
-                        if st.button(f"Marcar pagada sin comprobante (envía a revisión) — Cuota {d['number']}", key=f"manual_paid_{it.id}"):
+                        if st.button(f"Marcar pagada sin comprobante — {d['number']}", key=f"manual_paid_{it.id}"):
                             it.reference.update({
                                 "receipt_status": "PENDING",
                                 "receipt_note": "Declaración de pago sin comprobante",
                                 "receipt_uploaded_by": user["uid"],
                                 "receipt_uploaded_at": gcf.SERVER_TIMESTAMP
                             })
-                            # Notificar operador
                             op = db.collection("users").document(ag["operator_id"]).get().to_dict()
                             send_email(op.get("email"), "Pago declarado sin comprobante",
                                        tpl_operator_new_receipt(doc.id, d["number"], user.get("email"), st.secrets.get("APP_BASE_URL","")))
-                            st.success("Pago declarado. Queda pendiente de revisión del operador.")
+                            st.success("Pago declarado. Pendiente de revisión del operador.")
                             st.rerun()
 
             if role == "operador":
-                st.info("Acciones rápidas: marcar pagada/revertir (con o sin comprobante).")
+                st.info("Acciones rápidas: **marcar pagada/revertir** (con o sin comprobante).")
                 for it in items:
                     d = it.to_dict()
                     c1, c2, c3 = st.columns([0.25, 0.25, 0.5])
                     c1.write(f"Cuota {d['number']}")
                     c2.write(f"Vence {d['due_date']}")
                     if not d.get("paid"):
-                        if c3.button(f"Marcar como pagada — {d['number']}", key=f"op_paid_{doc.id}_{it.id}"):
+                        if c3.button(f"Marcar pagada — {d['number']}", key=f"op_paid_{doc.id}_{it.id}"):
                             it.reference.update({
                                 "paid": True,
                                 "paid_at": gcf.SERVER_TIMESTAMP,
-                                "receipt_status": d.get("receipt_status") or "APPROVED",  # si no había flujo de recibo, se aprueba manual
+                                "receipt_status": d.get("receipt_status") or "APPROVED",
                                 "receipt_note": None if d.get("receipt_status") == "APPROVED" else "Aprobación manual sin comprobante"
                             })
                             st.success(f"Cuota {d['number']} marcada como pagada.")
@@ -477,10 +734,19 @@ def list_agreements_page(db, user):
                             st.info(f"Cuota {d['number']} revertida a pendiente.")
                             st.rerun()
 
-            if role == "operador":
-                st.info("Para revisar pagos/comprobantes PENDIENTES, usá el menú: **Comprobantes**.")
+            # ---- Descargar PDF
+            st.write("#### Exportar")
+            if st.button("Generar PDF del convenio"):
+                pdf_bytes = _build_agreement_pdf(db, doc)
+                st.download_button(
+                    "Descargar PDF",
+                    data=pdf_bytes,
+                    file_name=f"convenio_{doc.id}.pdf",
+                    mime="application/pdf"
+                )
 
-# --- Diagnóstico (solo admin) ---
+# ------------------ Diagnóstico ------------------
+
 def diagnostics_page():
     st.subheader("🔎 Diagnóstico")
     try:
@@ -504,7 +770,8 @@ def diagnostics_page():
         st.error(f"Error de Firestore: {e}")
         st.code("".join(traceback.format_exception(e)), language="text")
 
-# --- Main ---
+# ------------------ Main ------------------
+
 def main():
     init_firebase()
     try:
@@ -524,10 +791,11 @@ def main():
             signup_form(db)
         st.stop()
     header(user)
+
     # Menú contextual
     menu = []
     if user.get("role") == "admin":
-        menu += ["Panel (admin)"]
+        menu += ["Panel (admin)", "Configuración"]
     if user.get("role") == "operador":
         menu += ["Panel (operador)", "Comprobantes"]
     if user.get("role") in ["admin","operador"]:
@@ -535,11 +803,14 @@ def main():
     menu += ["Mis convenios", "Mi contraseña"]
     if user.get("role") == "admin":
         menu += ["Usuarios (admin)", "Diagnóstico"]
+
     choice = st.sidebar.radio("Menú", menu)
     if choice == "Panel (admin)":
         admin_dashboard_page(db)
     elif choice == "Panel (operador)":
         operator_dashboard_page(db, user)
+    elif choice == "Configuración":
+        settings_page(db)
     elif choice == "Crear convenio":
         create_agreement_page(db, user)
     elif choice == "Comprobantes":
