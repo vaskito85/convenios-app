@@ -3,3 +3,5 @@ firebase-admin
 google-cloud-firestore
 requests
 pytz
+reportlab
+pandas
