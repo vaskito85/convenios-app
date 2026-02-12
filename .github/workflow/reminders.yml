@@ -5,28 +5,46 @@ on:
     - cron: "0 12 * * *"   # 12:00 UTC ≈ 09:00 Buenos Aires
   workflow_dispatch: {}
 
+concurrency:
+  group: reminders
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
   send-reminders:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: "requirements.txt"
+
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install --no-cache-dir -r requirements.txt
+
       - name: Run reminder script
         env:
           FIREBASE_CREDENTIALS: ${{ secrets.FIREBASE_CREDENTIALS }}
-          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
-          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          SMTP_USE_TLS: ${{ secrets.SMTP_USE_TLS }}
-          SMTP_SENDER: ${{ secrets.SMTP_SENDER }}
-          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          FIREBASE_PROJECT_ID:  ${{ secrets.FIREBASE_PROJECT_ID }}
+          SMTP_HOST:            ${{ secrets.SMTP_HOST }}
+          SMTP_PORT:            ${{ secrets.SMTP_PORT }}
+          SMTP_USER:            ${{ secrets.SMTP_USER }}
+          SMTP_PASS:            ${{ secrets.SMTP_PASS }}
+          SMTP_USE_TLS:         ${{ secrets.SMTP_USE_TLS }}
+          SMTP_SENDER:          ${{ secrets.SMTP_SENDER }}
+          APP_BASE_URL:         ${{ secrets.APP_BASE_URL }}
+          # Opcionales del worker:
+          # APP_TZ:                    America/Argentina/Buenos_Aires
+          # REMINDER_DAYS_BEFORE:      3
+          # REMINDER_DAYS_AFTER:       3
+          # REMINDER_COOLDOWN_DAYS:    3
         run: python send_reminders.py
