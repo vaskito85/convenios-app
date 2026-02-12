@@ -1,6 +1,9 @@
 # auth.py
 import streamlit as st
 import requests
+import re
+import secrets
+import string
 from firebase_admin import auth as admin_auth
 from google.cloud import firestore  # tipos
 from emailer import (
@@ -9,6 +12,7 @@ from emailer import (
 )
 
 APP_URL = None
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 def _api_key():
     return st.secrets["FIREBASE_WEB_API_KEY"]
@@ -19,12 +23,33 @@ def _app_url():
         APP_URL = st.secrets.get("APP_BASE_URL", "https://example.com")
     return APP_URL
 
+def _valid_email(email: str) -> bool:
+    return bool(EMAIL_RE.match(email or ""))
+
+def _valid_password(pwd: str) -> bool:
+    return isinstance(pwd, str) and len(pwd) >= 6
+
 def firebase_sign_in(email: str, password: str):
     url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={_api_key()}"
     payload = {"email": email, "password": password, "returnSecureToken": True}
-    r = requests.post(url, json=payload, timeout=15)
+    try:
+        r = requests.post(url, json=payload, timeout=15)
+    except requests.RequestException:
+        st.error("No se pudo contactar el servicio de autenticación. Intentá de nuevo.")
+        return None
     if r.status_code == 200:
         return r.json()
+    try:
+        err = r.json().get("error", {})
+        code = (err.get("message") or "").upper()
+    except Exception:
+        code = ""
+    if code in {"EMAIL_NOT_FOUND", "INVALID_PASSWORD"}:
+        st.error("Email o contraseña incorrectos.")
+    elif code == "USER_DISABLED":
+        st.error("Tu usuario está deshabilitado.")
+    else:
+        st.error("No se pudo iniciar sesión. Intentá nuevamente.")
     return None
 
 def get_current_user(db: firestore.Client):
@@ -41,9 +66,11 @@ def login_form(db: firestore.Client):
         password = st.text_input("Contraseña", type="password")
         ok = st.form_submit_button("Entrar")
     if ok:
+        if not _valid_email(email) or not _valid_password(password):
+            st.error("Ingresá un email válido y una contraseña de al menos 6 caracteres.")
+            return
         data = firebase_sign_in(email, password)
         if not data:
-            st.error("Email o contraseña incorrectos.")
             return
         uid = data["localId"]
         # Validar estado en users
@@ -68,17 +95,22 @@ def signup_form(db: firestore.Client):
         password = st.text_input("Contraseña", type="password")
         ok = st.form_submit_button("Registrarme")
     if ok:
-        if not email or not password:
-            st.error("Email y contraseña son obligatorios.")
+        if not _valid_email(email) or not _valid_password(password):
+            st.error("Ingresá un email válido y una contraseña de al menos 6 caracteres.")
             return
         # Crear usuario en Firebase Auth (si ya existe, informamos)
         try:
-            u = admin_auth.get_user_by_email(email)
+            _ = admin_auth.get_user_by_email(email)
             st.error("Ya existe un usuario con ese email.")
             return
         except Exception:
             pass
-        user = admin_auth.create_user(email=email, password=password)
+        try:
+            user = admin_auth.create_user(email=email, password=password)
+        except Exception as e:
+            st.error("No se pudo crear el usuario. Intentá nuevamente.")
+            st.exception(e)
+            return
         db.collection("users").document(user.uid).set({
             "email": email,
             "full_name": full_name,
@@ -111,8 +143,8 @@ def ensure_admin_seed(db: firestore.Client):
         ok = st.form_submit_button("Crear admin")
 
     if ok:
-        if not email or not pwd:
-            st.error("Email y contraseña son obligatorios.")
+        if not _valid_email(email) or not _valid_password(pwd):
+            st.error("Ingresá un email válido y una contraseña de al menos 6 caracteres.")
             st.stop()
         user = admin_auth.create_user(email=email, password=pwd)
         db.collection("users").document(user.uid).set({
@@ -131,6 +163,10 @@ def change_password(uid: str, new_password: str):
     admin_auth.update_user(uid, password=new_password)
 
 # ---------- Administración de usuarios ----------
+def _gen_temp_password(n=12):
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(n))
+
 def admin_users_page(db: firestore.Client, user_admin):
     st.subheader("👥 Usuarios")
     st.caption("Aprobá o rechazá registros pendientes. También podés crear usuarios manualmente.")
@@ -143,14 +179,18 @@ def admin_users_page(db: firestore.Client, user_admin):
             temp_pwd = st.text_input("Contraseña temporal", type="password")
             ok = st.form_submit_button("Crear")
         if ok:
-            if not email or not temp_pwd:
-                st.error("Email y contraseña son obligatorios.")
+            if not _valid_email(email) or not _valid_password(temp_pwd):
+                st.error("Ingresá un email válido y una contraseña de al menos 6 caracteres.")
             else:
-                u = admin_auth.create_user(email=email, password=temp_pwd)
-                db.collection("users").document(u.uid).set({
-                    "email": email, "full_name": full_name, "role": role, "status": "APPROVED"
-                })
-                st.success("Usuario creado.")
+                try:
+                    u = admin_auth.create_user(email=email, password=temp_pwd)
+                    db.collection("users").document(u.uid).set({
+                        "email": email, "full_name": full_name, "role": role, "status": "APPROVED"
+                    })
+                    st.success("Usuario creado.")
+                except Exception as e:
+                    st.error("No se pudo crear el usuario.")
+                    st.exception(e)
 
     st.write("### Pendientes de aprobación")
     pending = list(db.collection("users").where("status", "==", "PENDING").stream())
@@ -182,9 +222,14 @@ def admin_users_page(db: firestore.Client, user_admin):
         cols[1].write(u.get("email"))
         cols[2].write(f"{role_badge(u.get('role'))} · {u.get('status','')}")
         if cols[3].button("Reset clave", key=f"reset_{d.id}"):
-            temp = "Temp12345!"
+            temp = _gen_temp_password()
             admin_auth.update_user(d.id, password=temp)
-            st.info(f"Contraseña temporal: {temp}")
+            try:
+                send_email(u.get("email"), "Restablecimiento de contraseña",
+                           f"Hola, {u.get('full_name') or ''}. Tu nueva contraseña temporal es: <b>{temp}</b>.")
+                st.success("Contraseña temporal enviada por email.")
+            except Exception:
+                st.warning("La contraseña temporal no pudo enviarse por email. Contactá al usuario.")
         if d.id != user_admin["uid"] and cols[4].button("Eliminar", key=f"del_{d.id}"):
             try:
                 admin_auth.delete_user(d.id)
