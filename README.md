@@ -1,1 +1,366 @@
---- # 💳 Asistente de Convenios de Pago Aplicación Streamlit para gestionar convenios de pago con soporte de: - Usuarios y roles (admin, operador, cliente) - Creación y envío de convenios a clientes para aceptación - Cálculo de cuotas (Sistema Francés y Capital Fijo / Interés sobre saldo) - Gestión de comprobantes (upload al Storage, aprobación/rechazo) - Métricas y tableros (admin/operador) - Recordatorios automáticos de cuotas próximas o vencidas (worker + GitHub Actions) Backend de datos y archivos sobre Firebase (Firestore + Storage) y Firebase Auth. --- ## 🧭 Índice - #arquitectura - #roles-y-permisos - #modelo-de-datos - #estados-del-convenio-y-ciclo-de-vida - #cálculo-de-cuotas - #emails-y-notificaciones - #recordatorios-automáticos - #estructura-del-repo - #configuración-secretsvariables - #instalación-y-ejecución-local - #despliegue--ci - #seguridad-y-buenas-prácticas - #solución-de-problemas - #roadmap--mejoras-sugeridas - #licencia --- ## Arquitectura - Frontend/Server: https://streamlit.io - Autenticación: Firebase Authentication - Alta/gestión de usuarios con Firebase Admin SDK - Login por REST (accounts:signInWithPassword) - Base de datos: Cloud Firestore (Admin SDK) - Almacenamiento: Firebase Storage (Admin SDK) – comprobantes PDF/JPG/PNG - Email: SMTP estándar (configurable), plantillas HTML simples - Worker de recordatorios: script Python ejecutado por GitHub Actions en CRON --- ## Roles y permisos - Admin - Panel de métricas globales - Aprobación/rechazo de nuevos usuarios - Eliminación de convenios - Diagnóstico (secrets, warmup, ping Firestore) - Disparar manualmente recordatorios (opcional) - Operador - Crear convenios, recalcular calendario - Enviar a aceptación - Revisar comprobantes (aprobar/rechazar; marca pagada) - Panel de métricas personales - Cliente - Aceptar/rechazar convenio - Subir comprobantes por cuota - Ver su calendario y estado --- ## Modelo de datos users (colección) {uid}: { email, full_name, role ∈ {admin, operador, cliente}, status ∈ {PENDING, APPROVED, REJECTED}, rejection_note? : string } agreements (colección) {agreementId}: { title, notes, operator_id (uid), client_id? (uid), client_email (fallback), principal (float), interest_rate (float mensual), installments (int), method ∈ {"french", "declining"}, status ∈ {DRAFT, PENDING_ACCEPTANCE, ACTIVE, COMPLETED, CANCELLED, REJECTED}, start_date (YYYY-MM-DD), created_at, accepted_at?, completed_at? } agreements/{agreementId}/installments (subcolección) {installmentId}: { number (1..n), due_date (YYYY-MM-DD), capital (float), interest (float), total (float), paid (bool), paid_at?, last_reminder_sent?, receipt_status? ∈ {PENDING, APPROVED, REJECTED}, receipt_url?, receipt_note?, receipt_uploaded_by?, receipt_uploaded_at? } > Nota: se guarda client_email en el convenio como fallback (sirve si el cliente aún no tiene uid). --- ## Estados del convenio y ciclo de vida 1. DRAFT: creado por el operador; puede recalcularse el calendario. 2. PENDING_ACCEPTANCE: enviado al cliente; el cliente acepta o rechaza. 3. ACTIVE: aceptado por el cliente; se gestionan pagos y comprobantes. 4. COMPLETED: todas las cuotas pagadas → marcado automático. 5. CANCELLED: cancelado por admin/operador (solo si estaba en DRAFT/PENDING). 6. REJECTED: rechazado por el cliente (guarda rejection_note). --- ## Cálculo de cuotas Dos métodos soportados en calculations.py: - Sistema Francés (cuota fija) La última cuota ajusta capital (y total) para neutralizar residuos de redondeo. - Capital Fijo (interés sobre saldo / declining) Capital constante; la última cuota ajusta por redondeos. Ambos métodos generan cuotas con: number, due_date, capital, interest, total. --- ## Emails y notificaciones - Registro de usuario: recibido, aprobado, rechazado - Convenios: enviado a aceptación, aceptado, rechazado - Comprobantes: nuevo (al operador), aprobado/rechazado (al cliente) - Remitente/SMTP: configurable por secrets/env (SMTP_*) > Plantillas HTML simples en emailer.py (fáciles de personalizar). --- ## Recordatorios automáticos Archivo: send_reminders.py (worker) - Recorre convenios ACTIVE y busca cuotas impagas: - Próximas a vencer (≤ REMINDER_DAYS_BEFORE) - Hoy - Vencidas (≤ REMINDER_DAYS_AFTER) - Respeta last_reminder_sent y un cooldown (REMINDER_COOLDOWN_DAYS) para no spamear. - Resuelve email del cliente por client_id (si existe) o client_email del convenio. - Envía el recordatorio (opcional: copia al operador) y actualiza last_reminder_sent. ### GitHub Actions (CRON) Workflow: .github/workflows/reminders.yml Se ejecuta diario a las 12:00 UTC (~09:00 Buenos Aires), con disparo manual (workflow_dispatch) disponible. Variables utilizadas (secrets): - FIREBASE_CREDENTIALS (JSON de Service Account, pegado tal cual) - FIREBASE_PROJECT_ID - SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_USE_TLS, SMTP_SENDER - APP_BASE_URL - (Opcionales del worker) APP_TZ, REMINDER_DAYS_BEFORE, REMINDER_DAYS_AFTER, REMINDER_COOLDOWN_DAYS --- ## Estructura del repo . ├─ app.py # App principal (Streamlit) ├─ auth.py # Registro/login, roles, gestión de usuarios ├─ calculations.py # Cálculo de cuotas (francés/declining) ├─ emailer.py # Envío de correos + plantillas ├─ firebase_init.py # Inicialización Admin SDK (credenciales/bucket) ├─ send_reminders.py # Worker de recordatorios (CLI/Streamlit opcional) ├─ requirements.txt # Dependencias └─ .github/ └─ workflows/ └─ reminders.yml # CRON de recordatorios (GitHub Actions) --- ## Configuración (secrets/variables) ### 1) Streamlit (.streamlit/secrets.toml) — para app.py toml # .streamlit/secrets.toml FIREBASE_CREDENTIALS = """ { ... JSON del Service Account ... } """ FIREBASE_PROJECT_ID = "tu-proyecto" FIREBASE_STORAGE_BUCKET = "tu-proyecto.appspot.com" # opcional FIREBASE_WEB_API_KEY = "xxx..." # para login REST APP_BASE_URL = "https://tu-dominio-o-streamlit.app" SMTP_HOST = "smtp.tu-dominio.com" SMTP_PORT = "587" SMTP_USER = "no-reply@tu-dominio.com" SMTP_PASS = "********" SMTP_USE_TLS = "true" SMTP_SENDER = "Asistente de Convenios <no-reply@tu-dominio.com>" ADMIN_EMAILS = "admin1@dominio.com, admin2@dominio.com" # opcional  > Nota: FIREBASE_CREDENTIALS es el contenido del JSON (triple comillas), no una ruta a archivo. ### 2) Variables de entorno — para worker en GitHub Actions o cron - Obligatorias: FIREBASE_CREDENTIALS, FIREBASE_PROJECT_ID, SMTP_*, APP_BASE_URL - Opcionales: APP_TZ (por defecto America/Argentina/Buenos_Aires), REMINDER_* --- ## Instalación y ejecución local bash # 1) Crear y activar venv python -m venv .venv source .venv/bin/activate # (Windows: .venv\Scripts\activate) # 2) Instalar deps pip install --upgrade pip pip install -r requirements.txt # 3) Configurar secrets de Streamlit # Crear .streamlit/secrets.toml (ver ejemplo arriba) # 4) Ejecutar la app streamlit run app.py  ### Probar el worker de recordatorios (local) bash # con las variables de entorno seteadas: export FIREBASE_CREDENTIALS='{"type":"service_account", ...}' export FIREBASE_PROJECT_ID='tu-proyecto' export SMTP_HOST='...' # ... otros SMTP_* y APP_BASE_URL ... python send_reminders.py  > Opcional: también podés correr streamlit run send_reminders.py y ejecutar el job con un botón (solo admin). --- ## Despliegue / CI - GitHub Actions: reminders.yml ejecuta el worker diario (12:00 UTC) y permite disparo manual. - Despliegue de la app: - Streamlit Community/Cloud, o - Contenedor/VM con streamlit run app.py. - Firebase Emuladores (opcional para local): soportado vía variables FIRESTORE_EMULATOR_HOST / STORAGE_EMULATOR_HOST si los usás. - ADC (Application Default Credentials): firebase_init.py intenta ADC si no encuentra FIREBASE_CREDENTIALS (útil en Cloud Run/Functions o local con GOOGLE_APPLICATION_CREDENTIALS). --- ## Seguridad y buenas prácticas - Service Account: guardalo en secrets (nunca lo comitees). - SMTP: usá TLS/SSL y una cuenta exclusiva para la app. - URLs firmadas de Storage para comprobantes (expiran a los 15 minutos). - Roles: la UI muestra páginas según role y status; el seed admin fuerza a crear un admin si no hay usuarios. - Cierre automático: si todas las cuotas están pagadas, el convenio pasa a COMPLETED. --- ## Solución de problemas - “No se pudo conectar a Firestore (warmup)”: verificá FIREBASE_CREDENTIALS y FIREBASE_PROJECT_ID en secrets/entorno. - Email no llega: revisá SMTP_* y autenticación; chequeá SPAM, DKIM/SPF/DMARC. - Cliente no aparece en “Mis convenios”: si el convenio fue creado con solo client_email, el filtro debe considerar email (ya está resuelto en app.py). - Recordatorios no salen: corré send_reminders.py local o workflow_dispatch en Actions; revisá logs de ejecución. --- ## Roadmap / mejoras sugeridas - Paginación y filtros en listados grandes (operador/admin). - Adjuntar comprobante al email (o link firmado con expiración custom) al aprobar/rechazar. - Exportar calendario (CSV/Excel/PDF) y envío al cliente. - Dashboards con gráficos (aceptación, mora, recaudación). - Soporte de storage alternativo (R2/S3) guardando solo la URL pública/firmada. - Reset de contraseña por link (Gmail API / Identity Toolkit) como alternativa al reset temporal. --- ## Licencia Este proyecto se publica bajo GPL-3.0 (ver archivo LICENSE en el repo). --- ## Créditos - Desarrollo y mantenimiento: Germán Berterreix - Colaboración y soporte técnico: asistentes y contribuyentes del repo --- ### ¿Necesitás ayuda? Abrí un issue o ejecutá workflow_dispatch en Actions para probar recordatorios.
+# 💳 Asistente de Convenios de Pago
+
+Aplicación **Streamlit** para gestionar convenios de pago con soporte de:
+- **Usuarios y roles** (`admin`, `operador`, `cliente`)
+- **Creación de convenios** con **adjuntos** (documentación de la deuda)
+- **Cálculo de cuotas** (Sistema Francés y, si está habilitado el interés, también Capital Fijo/Interés sobre saldo)
+- **Gestión de pagos/comprobantes** (con y sin archivo adjunto)
+- **Aprobación/rechazo** de pagos por el operador
+- **Métricas** (tableros admin/operador)
+- **Recordatorios automáticos** (worker + GitHub Actions)
+- **Exportación a PDF** con detalle de cuotas (incluye totales) y documentación adjunta
+
+Backend: **Firebase** (Firestore + Storage + Auth)  
+Email: **SMTP** configurable
+
+---
+
+## 🧭 Índice
+
+- [Arquitectura](#arquitectura)
+- [Roles y permisos](#roles-y-permisos)
+- [Modelo de datos](#modelo-de-datos)
+- [Estados y ciclo de vida del convenio](#estados-y-ciclo-de-vida-del-convenio)
+- [Cálculo de cuotas](#cálculo-de-cuotas)
+- [Interés: configuración global](#interés-configuración-global)
+- [Adjuntos y PDF del convenio](#adjuntos-y-pdf-del-convenio)
+- [Pagos y comprobantes](#pagos-y-comprobantes)
+- [Recordatorios automáticos](#recordatorios-automáticos)
+- [Estructura del repo](#estructura-del-repo)
+- [Requisitos e instalación local](#requisitos-e-instalación-local)
+- [Configuración (secrets/variables)](#configuración-secretsvariables)
+- [Primer uso (seed admin)](#primer-uso-seed-admin)
+- [Despliegue / CI](#despliegue--ci)
+- [Colores y estado visual](#colores-y-estado-visual)
+- [Solución de problemas](#solución-de-problemas)
+- [Roadmap sugerido](#roadmap-sugerido)
+- [Licencia y créditos](#licencia-y-créditos)
+- [Anexo: Guía rápida para Copilot](#anexo-guía-rápida-para-copilot)
+
+---
+
+## Arquitectura
+
+- **UI/Servidor**: [Streamlit](https://streamlit.io)
+- **Auth**: Firebase Authentication  
+  - Alta/gestión via **Firebase Admin SDK**  
+  - Login con **Identity Toolkit REST** (`accounts:signInWithPassword`)
+- **Base de datos**: **Cloud Firestore** (Admin SDK)
+- **Archivos**: **Firebase Storage** (Admin SDK)  
+  - Comprobantes y adjuntos de convenios
+- **Correo**: SMTP estándar (TLS/SSL) con plantillas HTML simples
+- **Worker de recordatorios**: script Python ejecutado por **GitHub Actions** en cron
+
+---
+
+## Roles y permisos
+
+- **Admin**
+  - Panel de métricas globales
+  - Aprobación/rechazo de usuarios
+  - **Configuración global** (habilitar/deshabilitar interés)
+  - Eliminar convenios
+  - Diagnóstico
+- **Operador**
+  - Crear convenios y **adjuntar documentos**
+  - Recalcular calendario (mientras esté en `DRAFT`/`PENDING_ACCEPTANCE`)
+  - Enviar a aceptación
+  - **Aprobar/rechazar pagos** (con o sin comprobante)
+  - Panel de métricas personales
+- **Cliente**
+  - Aceptar/rechazar convenio
+  - **Subir comprobante** de pago
+  - **Marcar pago sin comprobante** (queda `PENDING` hasta revisión)
+  - Ver su calendario de cuotas y estado
+
+---
+
+## Modelo de datos
+users (colección)
+{uid}: {
+email, full_name, role ∈ {admin, operador, cliente},
+status ∈ {PENDING, APPROVED, REJECTED},
+rejection_note?
+}
+agreements (colección)
+{agreementId}: {
+title, notes,
+operator_id (uid),
+client_id? (uid),          // puede no existir si el cliente aún no se registró
+client_email,              // fallback
+principal (float),
+interest_rate (float mensual, p.ej. 0.05 representa 5%),
+installments (int),
+method ∈ {"french","declining"},
+status ∈ {DRAFT, PENDING_ACCEPTANCE, ACTIVE, COMPLETED, CANCELLED, REJECTED},
+start_date (YYYY-MM-DD),
+created_at, accepted_at?, completed_at?
+}
+agreements/{agreementId}/installments (subcolección)
+{installmentId}: {
+number (1..n),
+due_date (YYYY-MM-DD),
+capital (float),
+interest (float),
+total (float),
+paid (bool),
+paid_at?,
+last_reminder_sent?,
+// flujo de comprobantes/pagos
+receipt_status? ∈ {PENDING, APPROVED, REJECTED},
+receipt_url?, receipt_note?,
+receipt_uploaded_by?, receipt_uploaded_at?
+}
+agreements/{agreementId}/attachments (subcolección)
+{attachmentId}: {
+name, path, content_type, size,
+uploaded_by, uploaded_at
+> **Nota**: `client_email` se guarda como *fallback* para listar convenios del cliente aunque todavía no tenga `uid`.
+
+---
+
+## Estados y ciclo de vida del convenio
+
+1. **DRAFT**: creado por operador; puede recalcular cuotas y adjuntar documentos.
+2. **PENDING_ACCEPTANCE**: enviado al cliente; este **acepta** o **rechaza**.
+3. **ACTIVE**: aceptado y vigente; se registran pagos (con o sin comprobante).
+4. **COMPLETED**: **automático** cuando **todas** las cuotas están `paid = True`.
+5. **CANCELLED**: cancelado (solo en etapas iniciales).
+6. **REJECTED**: rechazado por el cliente (se guarda `rejection_note`).
+
+---
+
+## Cálculo de cuotas
+
+Módulo `calculations.py`:
+- **Sistema Francés** (`french`): cuota fija; última cuota ajusta por redondeo.
+- **Capital Fijo / Interés sobre saldo** (`declining`): capital constante, última cuota ajusta por redondeo.
+
+> **Totales visibles**: en la tabla de cuotas se muestra una fila **TOTAL** (suma de capital, interés y total).
+
+---
+
+## Interés: configuración global
+
+- **Admin → Configuración**: `interest_enabled` (on/off) persistido en `config/settings`.
+- Si **está deshabilitado**:
+  - **No** se muestra el campo “Interés mensual (%)”.
+  - El **método** queda **fijo / deshabilitado** (“Sistema francés”), **no seleccionable**.
+  - `interest_rate` se guarda en 0.0.
+
+---
+
+## Adjuntos y PDF del convenio
+
+- **Adjuntos** (operador, al crear el convenio):
+  - PDF/JPG/PNG múltiples (máx. 10MB c/u).
+  - Se guardan en `agreements/{id}/attachments` y en Storage.
+- **PDF** exportable desde la vista del convenio:
+  - Portada con datos clave (cliente, operador, principal, método, interés).
+  - **Calendario de cuotas con fila TOTAL**.
+  - **Documentación adjunta**: imágenes incrustadas; PDFs listados.
+
+---
+
+## Pagos y comprobantes
+
+- **Cliente**:
+  - Sube comprobante (PDF/JPG/PNG) → `receipt_status = PENDING`.
+  - **O** declara pago **sin comprobante** → también `PENDING`.
+- **Operador**:
+  - En **Comprobantes**: **aprueba** (marca `paid=True`, `APPROVED`) o **rechaza** (guarda `receipt_note`).
+  - En el listado del convenio: puede **marcar pagada / revertir** una cuota **aunque no haya comprobante**.
+- **Auto-complete**: si **todas** las cuotas quedan `paid=True`, el convenio pasa a `COMPLETED`.
+
+---
+
+## Recordatorios automáticos
+
+Archivo `send_reminders.py` (worker):
+- Recorre convenios `ACTIVE` y cuotas **impagas**:
+  - Próximas a vencer (≤ N días)
+  - **Hoy**
+  - Vencidas (≤ M días)
+- Respeta `last_reminder_sent` con un **cooldown** para no spamear.
+- Notifica al cliente (y copia opcional al operador).
+- Se ejecuta:
+  - **Local**: `python send_reminders.py`
+  - **GitHub Actions** (CRON): ver workflow.
+
+---
+
+## Estructura del repo
+
+
+.
+├─ app.py                 # App principal (Streamlit)
+├─ auth.py                # Registro/login, roles, gestión de usuarios
+├─ calculations.py        # Cálculo de cuotas (francés/declining) con ajuste de redondeos
+├─ emailer.py             # SMTP y plantillas
+├─ firebase_init.py       # Inicialización Admin SDK (credenciales/bucket)
+├─ send_reminders.py      # Worker de recordatorios (CLI/Streamlit opcional)
+├─ requirements.txt       # Dependencias
+└─ .github/
+└─ workflows/
+└─ reminders.yml    # CRON diario de recordatorios (12:00 UTC)
+
+---
+
+## Requisitos e instalación local
+
+bash
+# 1) Entorno
+python -m venv .venv
+source .venv/bin/activate    # Windows: .venv\Scripts\activate
+
+# 2) Dependencias
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# 3) Configurar secrets de Streamlit
+# Crear .streamlit/secrets.toml (ver abajo)
+
+# 4) Ejecutar la app
+streamlit run app.py
+
+requirements.txt:
+streamlit
+firebase-admin
+google-cloud-firestore
+requests
+pytz
+reportlab
+pandas
+Configuración (secrets/variables)
+.streamlit/secrets.toml (app)
+
+# Firebase (pegar contenido literal del JSON del service account)
+FIREBASE_CREDENTIALS = """{
+  "type":"service_account",
+  "project_id":"<tu-proyecto>",
+  ...
+}"""
+FIREBASE_PROJECT_ID = "<tu-proyecto>"
+# opcional, si querés forzar el bucket:
+FIREBASE_STORAGE_BUCKET = "<tu-proyecto>.appspot.com"
+
+# Web API Key para login por REST (Identity Toolkit)
+FIREBASE_WEB_API_KEY = "<apikey>"
+
+# Base URL de la app (para links en emails)
+APP_BASE_URL = "https://tu-app.streamlit.app"
+
+# SMTP
+SMTP_HOST   = "smtp.tu-dominio.com"
+SMTP_PORT   = "587"
+SMTP_USER   = "no-reply@tu-dominio.com"
+SMTP_PASS   = "********"
+SMTP_USE_TLS = "true"
+SMTP_SENDER = "Asistente de Convenios <no-reply@tu-dominio.com>"
+
+# (Opcional) admins a los que se envían avisos de nuevos usuarios/convenios
+ADMIN_EMAILS = "admin1@dominio.com, admin2@dominio.com"
+
+Variables para el worker (local o Actions)
+
+FIREBASE_CREDENTIALS (JSON en una sola línea, o archivo en local con ADC)
+FIREBASE_PROJECT_ID
+SMTP_*
+APP_BASE_URL
+Opcionales del worker:
+
+APP_TZ (default: America/Argentina/Buenos_Aires)
+REMINDER_DAYS_BEFORE, REMINDER_DAYS_AFTER, REMINDER_COOLDOWN_DAYS
+Primer uso (seed admin)
+
+Levantá streamlit run app.py.
+Si no existen usuarios, la app te pedirá crear el Admin (email/contraseña).
+Iniciá sesión como admin.
+Configuración: habilitá o deshabilitá interés según tu operación.
+Creá operadores y aprobá clientes según corresponda.
+
+
+Despliegue / CI
+
+GitHub Actions: .github/workflows/reminders.yml corre el worker a las 12:00 UTC (≈ 09:00 Buenos Aires), con disparo manual disponible.
+Streamlit Cloud o VM/Contenedor: ejecutar streamlit run app.py.
+ADC (Application Default Credentials): firebase_init.py intentará ADC si no hay FIREBASE_CREDENTIALS.
+
+
+Colores y estado visual
+
+PENDING_ACCEPTANCE → naranja
+REJECTED → rojo
+ACTIVE / COMPLETED → verde
+CANCELLED → gris
+
+En cuotas:
+
+PAGADA / APROBADO → 🟢
+PENDIENTE → 🟠
+RECHAZADO → 🔴
+
+
+Solución de problemas
+
+No conecta a Firestore: revisá FIREBASE_CREDENTIALS y FIREBASE_PROJECT_ID.
+No llegan emails: validá SMTP_*; verificá SPF/DKIM/DMARC y carpeta SPAM.
+Cliente no ve su convenio: si aún no tiene cuenta, igual se lista por client_email. Asegurate de que el correo coincida.
+Error de widgets duplicados (StreamlitDuplicateElementId) → ya se corrige asignando key= único en cada botón (se hizo en el código).
+PDF no incrusta imágenes: verificá el tipo de contenido y permisos del bucket.
+
+
+Roadmap sugerido
+
+Filtros/orden/paginación en listados grandes
+Exportación CSV/Excel del calendario
+Templates HTML más ricos para emails
+Gráficos de aceptación y mora
+Integraciones alternativas de storage (S3/R2)
+Reset de contraseña por link (además del temporal)
+
+
+Licencia y créditos
+
+Licencia: GPL-3.0
+Desarrollo: Germán Berterreix
+Soporte y mejoras: colaboradores del repo
+
+
+Anexo: Guía rápida para Copilot
+
+Contexto clave para entender el proyecto en futuras conversaciones:
+
+
+Interés globalmente configurable: config/settings.interest_enabled.
+
+Si está apagado, la UI no muestra el campo de interés y el método queda deshabilitado en “Sistema francés”.
+
+
+Pagos:
+
+El cliente puede subir comprobante o declarar pago sin comprobante (queda PENDING).
+El operador puede aprobar/rechazar y también marcar pagada/revertir sin comprobante.
+Cuando todas están pagadas → convenio COMPLETED.
+
+
+Adjuntos:
+
+Se guardan como subcolección attachments en cada convenio y en Storage.
+El PDF incluye calendario con totales + adjuntos (imágenes incrustadas; PDFs listados).
+
+
+Recordatorios:
+
+send_reminders.py corre diario por Actions y puede ejecutarse manual/local.
+
+
+Archivos clave:
+
+app.py (toda la UI y flujos)
+auth.py, emailer.py, firebase_init.py
+calculations.py (francés/declining con ajuste de redondeos)
+send_reminders.py (worker)
+Workflow: .github/workflows/reminders.yml
+
+
