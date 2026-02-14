@@ -102,12 +102,14 @@ def signup_form(db: firestore.Client):
             st.error("No se pudo crear el usuario.")
             st.exception(e)
             return
-        # Cambiado: status = "APPROVED" para operador y cliente
+        # status = "APPROVED" para operador y cliente
         db.collection("users").document(user.uid).set({
             "email": email, "full_name": full_name, "role": role, "status": "APPROVED"
         })
+        # Enviar email de confirmación al usuario
         send_email(email, "Registro recibido",
             f"#### Registro recibido\n\nHola {full_name or email},\nTu cuenta fue creada y está **activa**.\nAcceso: {_app_url()}")
+        # Enviar email a los admins
         send_email_admins("Nuevo usuario registrado",
             f"#### Nuevo usuario\n\nEmail: **{email}**\nRol solicitado: **{role}**\nAcceso: {_app_url()}")
         st.success("Registro enviado. Tu cuenta ya está activa.")
