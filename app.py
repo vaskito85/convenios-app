@@ -30,8 +30,8 @@ def main():
     menu += ["Mis convenios","Mi contraseña"]
     if user.get("role")=="admin":
         menu += ["Usuarios (admin)"]
-    # Oculta el menú lateral de páginas internas
-    choice = st.radio("Menú", menu, key="menu_radio")
+    # --- Menú lateral ---
+    choice = st.sidebar.radio("Menú", menu, key="menu_radio")
     if choice=="Panel (admin)":
         dashboard_admin.render(db)
     elif choice=="Panel (operador)":
@@ -43,7 +43,7 @@ def main():
     elif choice=="Comprobantes":
         receipts_review.render(db, user)
     elif choice=="Mis convenios":
-        agreements_list.render(db, user)  # Cambiado: muestra la página correcta
+        agreements_list.render(db, user)
     elif choice=="Mi contraseña":
         change_password_page(user)
     elif choice=="Usuarios (admin)":
@@ -51,4 +51,3 @@ def main():
 
 if __name__=="__main__":
     main()
-
