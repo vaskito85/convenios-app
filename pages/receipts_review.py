@@ -1,6 +1,6 @@
 import streamlit as st
 from services.storage import signed_url
-from services.installments import auto_complete_if_all_paid
+from services.installments import auto_complete_if_all_paid, mark_paid
 from services.notifications import notify_client_receipt_decision
 from google.cloud import firestore as gcf
 from core.firebase import get_bucket
@@ -25,12 +25,10 @@ def render(db, user):
                         st.error(f"Link: {e}")
                 else:
                     st.info("Sin comprobante (declaración manual).")
-
                 note = st.text_input("Observación rechazo", key=f"note_{inst.id}")
                 c1,c2 = st.columns(2)
                 if c1.button("Aprobar / Marcar pagada", key=f"ok_{inst.id}"):
-                    inst.reference.update({"receipt_status":"APPROVED","receipt_note":None,
-                                           "paid":True,"paid_at":gcf.SERVER_TIMESTAMP})
+                    mark_paid(inst.reference, manual_note="Marcada manualmente por operador")
                     notify_client_receipt_decision(st, db, ag_doc, d["number"], "APROBADO", "")
                     st.success("Pago aprobado.")
                     if auto_complete_if_all_paid(db, ag_doc):
