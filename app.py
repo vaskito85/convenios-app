@@ -1,9 +1,9 @@
 import streamlit as st
 from core.firebase import init_firebase, get_db
 from core.auth import ensure_admin_seed, get_current_user, login_form, signup_form, admin_users_page
-from pages.common import header, change_password_page
-from pages import settings as page_settings
-from pages import dashboard_admin, dashboard_operator, agreements_create, agreements_list, receipts_review
+from modules.common import header, change_password_page
+from modules import settings as page_settings
+from modules import dashboard_admin, dashboard_operator, agreements_create, agreements_list, receipts_review
 
 st.set_page_config(page_title="Asistente de Convenios de Pago", page_icon="💳", layout="wide")
 
@@ -51,3 +51,4 @@ def main():
 
 if __name__=="__main__":
     main()
+
