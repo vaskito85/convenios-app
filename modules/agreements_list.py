@@ -4,6 +4,7 @@ from services.installments import mark_paid, mark_unpaid
 from core.firebase import get_bucket
 from services.pdf_export import build_agreement_pdf
 from core.mail import send_email
+from services.notifications import notify_agreement_sent
 
 def render(db, user):
     st.subheader("📄 Mis convenios")
@@ -31,6 +32,13 @@ def render(db, user):
                         mark_unpaid(inst.reference)
                         st.warning("Cuota revertida a impaga.")
                         st.rerun()
+            # Botón para enviar a aprobación si está en DRAFT
+            if user.get("role") == "operador" and ag.get("status") == "DRAFT":
+                if st.button("Enviar a aprobación", key=f"aprobacion_{ag_doc.id}"):
+                    ag_doc.reference.update({"status": "PENDING_ACCEPTANCE"})
+                    notify_agreement_sent(st, db, ag_doc)
+                    st.success("Convenio enviado a aprobación.")
+                    st.rerun()
             # Botón para finalizar convenio y enviar PDF
             if user.get("role")=="operador" and todas_pagas and ag.get("status") != "COMPLETED":
                 if st.button("Finalizar convenio y enviar PDF", key=f"finalizar_{ag_doc.id}"):
