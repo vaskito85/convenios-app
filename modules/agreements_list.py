@@ -1,6 +1,9 @@
 import streamlit as st
 from services.agreements import list_agreements_for_role
 from services.installments import mark_paid, mark_unpaid
+from core.firebase import get_bucket
+from services.pdf_export import build_agreement_pdf
+from core.mail import send_email
 
 def render(db, user):
     st.subheader("📄 Mis convenios")
@@ -12,6 +15,7 @@ def render(db, user):
         with st.expander(f"Convenio #{ag_doc.id} — {ag.get('title','')}"):
             st.write(f"Estado: {ag.get('status','DRAFT')}")
             items = list(ag_doc.reference.collection("installments").order_by("number").stream())
+            todas_pagas = all(inst.to_dict().get("paid") for inst in items)
             for inst in items:
                 d = inst.to_dict()
                 st.write(f"Cuota {d['number']} — {d['due_date']} — Total ${d['total']:,.2f}")
@@ -27,3 +31,17 @@ def render(db, user):
                         mark_unpaid(inst.reference)
                         st.warning("Cuota revertida a impaga.")
                         st.rerun()
+            # Botón para finalizar convenio y enviar PDF
+            if user.get("role")=="operador" and todas_pagas and ag.get("status") != "COMPLETED":
+                if st.button("Finalizar convenio y enviar PDF", key=f"finalizar_{ag_doc.id}"):
+                    bucket = get_bucket()
+                    # Generar PDF con leyenda "Convenio finalizado"
+                    pdf_bytes = build_agreement_pdf(db, bucket, ag_doc, leyenda="Convenio finalizado")
+                    # Enviar PDF por email al operador y cliente
+                    operador_email = ag.get("operator_email") or user.get("email")
+                    cliente_email = ag.get("client_email")
+                    asunto = f"Convenio #{ag_doc.id} finalizado"
+                    html = f"<h4>Convenio finalizado</h4><p>Adjunto PDF con todas las cuotas pagas.</p>"
+                    send_email(operador_email, asunto, html, attachments=[(f"convenio_{ag_doc.id}.pdf", pdf_bytes, "application/pdf")])
+                    send_email(cliente_email, asunto, html, attachments=[(f"convenio_{ag_doc.id}.pdf", pdf_bytes, "application/pdf")])
+                    st.success("PDF generado y enviado por email al operador y cliente.")
