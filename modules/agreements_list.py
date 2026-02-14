@@ -1,5 +1,5 @@
 import streamlit as st
-from services.agreements import list_agreements_for_role
+from services.agreements import list_agreements_for_role, delete_agreement
 from services.installments import mark_paid, mark_unpaid
 from core.firebase import get_bucket
 from services.pdf_export import build_agreement_pdf
@@ -45,3 +45,10 @@ def render(db, user):
                     send_email(operador_email, asunto, html, attachments=[(f"convenio_{ag_doc.id}.pdf", pdf_bytes, "application/pdf")])
                     send_email(cliente_email, asunto, html, attachments=[(f"convenio_{ag_doc.id}.pdf", pdf_bytes, "application/pdf")])
                     st.success("PDF generado y enviado por email al operador y cliente.")
+            # Botón para eliminar convenio (solo admin)
+            if user.get("role") == "admin":
+                if st.button("❌ Eliminar convenio", key=f"del_ag_{ag_doc.id}"):
+                    bucket = get_bucket()
+                    delete_agreement(db, bucket, ag_doc)
+                    st.warning("Convenio eliminado.")
+                    st.rerun()
