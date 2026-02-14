@@ -12,18 +12,14 @@ def main():
     db = get_db()
     # Warmup
     db.collection("health").document("warmup").set({"ok": True})
-
     ensure_admin_seed(db)
-
     user = get_current_user(db)
     if not user:
         tab_login, tab_signup = st.tabs(["Iniciar sesión", "Registrarme"])
         with tab_login: login_form(db)
         with tab_signup: signup_form(db)
         st.stop()
-
     header(user)
-
     menu=[]
     if user.get("role")=="admin":
         menu += ["Panel (admin)","Configuración"]
@@ -34,9 +30,8 @@ def main():
     menu += ["Mis convenios","Mi contraseña"]
     if user.get("role")=="admin":
         menu += ["Usuarios (admin)"]
-
-    choice = st.sidebar.radio("Menú", menu, key="menu_radio")
-
+    # Oculta el menú lateral de páginas internas
+    choice = st.radio("Menú", menu, key="menu_radio")
     if choice=="Panel (admin)":
         dashboard_admin.render(db)
     elif choice=="Panel (operador)":
@@ -48,7 +43,7 @@ def main():
     elif choice=="Comprobantes":
         receipts_review.render(db, user)
     elif choice=="Mis convenios":
-        agreements_list.render(db, user)
+        agreements_list.render(db, user)  # Cambiado: muestra la página correcta
     elif choice=="Mi contraseña":
         change_password_page(user)
     elif choice=="Usuarios (admin)":
