@@ -1,4 +1,4 @@
-# ðŸ“˜ Asistente de Convenios de Pago
+#  Asistente de Convenios de Pago
 
 **Asistente de Convenios de Pago** es una aplicación web construida con **Python + Streamlit** y un backend serverless sobre **Firebase (Firestore, Storage y Authentication)**. Permite crear y administrar convenios de pago, adjuntar documentación, calcular cuotas bajo distintos métodos, gestionar comprobantes, emitir PDFs y enviar recordatorios automáticos.
 
@@ -6,7 +6,7 @@
 
 ---
 
-## ðŸ§­ Tabla de Contenidos
+## ­ Tabla de Contenidos
 1. [Descripción General](#-descripción-general)
 2. [Arquitectura del Sistema](#-arquitectura-del-sistema)
 3. [Tecnologías Utilizadas](#-tecnologías-utilizadas)
@@ -29,7 +29,7 @@
 
 ---
 
-## ðŸ“„ Descripción General
+##  Descripción General
 
 La aplicación permite que **operadores** creen convenios de pago para **clientes**, configurando monto principal, cantidad de cuotas, tasa de interés (si está habilitada globalmente) y método de cálculo (Sistema Francés o Capital Fijo / interés sobre saldo). El sistema genera el **calendario** completo, permite **adjuntar documentación** de respaldo, manejar **comprobantes** (con o sin archivo), **aprobar/rechazar pagos**, y **cerrar automáticamente** el convenio cuando todas las cuotas están pagadas.
 
@@ -37,7 +37,7 @@ Incluye **paneles** por rol, **exportación a PDF** con totales y documentos inc
 
 ---
 
-## ðŸ§± Arquitectura del Sistema
+##  Arquitectura del Sistema
 
 ```
 [Streamlit App]
@@ -58,7 +58,7 @@ La app es **stateless** y delega la persistencia y archivos a Firebase. Las URL 
 
 ---
 
-## ðŸ§° Tecnologías Utilizadas
+##  Tecnologías Utilizadas
 
 - **Python 3.x**
 - **Streamlit** (frontend + servidor)
@@ -72,7 +72,7 @@ La app es **stateless** y delega la persistencia y archivos a Firebase. Las URL 
 
 ---
 
-## ðŸ” Flujo General de la Aplicación
+##  Flujo General de la Aplicación
 
 1. **Inicio**: operador/admin inicia sesión.
 2. **Creación de convenio**: se define cliente, título, notas, principal, tasa (si aplica), método y cuotas.
@@ -86,7 +86,7 @@ La app es **stateless** y delega la persistencia y archivos a Firebase. Las URL 
 
 ---
 
-## ðŸ‘¥ Roles y Permisos
+##  Roles y Permisos
 
 **Administrador**
 - Panel de métricas globales.
@@ -111,7 +111,7 @@ La app es **stateless** y delega la persistencia y archivos a Firebase. Las URL 
 
 ---
 
-## ðŸ—ƒï¸?Modelo de Datos (Firestore)
+## ?Modelo de Datos (Firestore)
 
 ### `users`
 ```json
@@ -176,7 +176,7 @@ La app es **stateless** y delega la persistencia y archivos a Firebase. Las URL 
 
 ---
 
-## ðŸ“Š Estados del Convenio
+##  Estados del Convenio
 
 | Estado                | Descripción                                                      |
 |-----------------------|------------------------------------------------------------------|
@@ -191,7 +191,7 @@ La app es **stateless** y delega la persistencia y archivos a Firebase. Las URL 
 
 ---
 
-## ðŸ§® Cálculo de Cuotas
+##  Cálculo de Cuotas
 
 Implementado en `/core/calc.py` y consumido por `services/installments.py`.
 
@@ -207,7 +207,7 @@ Cuando **interés global** está **deshabilitado**, la UI oculta el campo de tas
 
 ---
 
-## ðŸ“Ž Gestión de Adjuntos
+##  Gestión de Adjuntos
 
 - Tipos permitidos: **PDF/JPG/PNG**.
 - TamaÃ±o máximo: **10 MB** por archivo.
@@ -217,7 +217,7 @@ Cuando **interés global** está **deshabilitado**, la UI oculta el campo de tas
 
 ---
 
-## ðŸ’µ Comprobantes y Pagos
+##  Comprobantes y Pagos
 
 **Cliente**
 - Puede **subir comprobante** (archivo) `receipt_status = PENDING`.
@@ -232,7 +232,7 @@ Cuando **interés global** está **deshabilitado**, la UI oculta el campo de tas
 
 ---
 
-## ðŸ§¾ Generación de PDFs
+##  Generación de PDFs
 
 - Implementado en `services/pdf_export.py` usando **ReportLab**.
 - Contenido:
@@ -242,7 +242,7 @@ Cuando **interés global** está **deshabilitado**, la UI oculta el campo de tas
 
 ---
 
-## â?Recordatorios Automáticos (Worker)
+## Recordatorios Automáticos (Worker)
 
 - Script: `worker/send_reminders.py`.
 - Recorre convenios `ACTIVE` y cuotas **impagas** (`paid=false`).
@@ -258,7 +258,7 @@ Cuando **interés global** está **deshabilitado**, la UI oculta el campo de tas
 
 ---
 
-## ðŸ“‚ Estructura del Proyecto
+##  Estructura del Proyecto
 
 ```text
 .
@@ -291,7 +291,7 @@ Cuando **interés global** está **deshabilitado**, la UI oculta el campo de tas
 
 ---
 
-## ðŸ› ï¸?Instalación y Ejecución
+## Instalación y Ejecución
 
 ```bash
 # 1) Crear entorno virtual
@@ -322,7 +322,7 @@ pandas
 
 ---
 
-## ðŸ” Configuración `.streamlit/secrets.toml` y Variables
+##  Configuración `.streamlit/secrets.toml` y Variables
 
 ```toml
 # Firebase (pegar contenido literal del JSON del Service Account)
@@ -361,7 +361,7 @@ REMINDER_COOLDOWN_DAYS = "3"
 
 ---
 
-## ðŸ§‘â€ðŸ’?Guía para Desarrolladores
+## Guía para Desarrolladores
 
 ### Primer uso (seed admin)
 1. `streamlit run app.py`.
@@ -387,7 +387,7 @@ REMINDER_COOLDOWN_DAYS = "3"
 
 ---
 
-## ðŸ§¯ Resolución de Problemas
+##  Resolución de Problemas
 
 - **No conecta a Firestore**: verificar `FIREBASE_CREDENTIALS` y `FIREBASE_PROJECT_ID`.
 - **No llegan emails**: revisar `SMTP_*`; chequear SPF/DKIM/DMARC y carpeta SPAM.
@@ -398,7 +398,7 @@ REMINDER_COOLDOWN_DAYS = "3"
 
 ---
 
-## ðŸ—ºï¸?Roadmap
+## Roadmap
 
 - Filtros, orden y paginación en listados grandes.
 - Exportar calendario a CSV/Excel.
@@ -410,7 +410,7 @@ REMINDER_COOLDOWN_DAYS = "3"
 
 ---
 
-## ðŸ“œ Licencia y Créditos
+##  Licencia y Créditos
 
 - **Licencia**: GPL-3.0 (sugerida; podés cambiar a MIT si preferís más permisiva).
 - **Autor**: Germán Berterreix.
@@ -418,7 +418,7 @@ REMINDER_COOLDOWN_DAYS = "3"
 
 ---
 
-## ðŸ§© Anexo Rápido para Nuevos Colaboradores
+##  Anexo Rápido para Nuevos Colaboradores
 
 - El switch global `interest_enabled` (en `config/settings`) controla la UI: si está **off**, la tasa **no se muestra** y el método de cálculo queda **fijo** en Francés con tasa 0.0.
 - El **cliente** puede subir **comprobante** o **declarar pago sin comprobante** (`PENDING`).
@@ -427,3 +427,4 @@ REMINDER_COOLDOWN_DAYS = "3"
 - **Adjuntos**: subcolección `attachments`; Storage `agreements/{id}/attachments/*`.
 - **PDF**: incluye calendario con **TOTAL** + preview de imágenes.
 - **Recordatorios**: `worker/send_reminders.py` (CRON diario opcional por Actions).
+
