@@ -5,7 +5,6 @@ import secrets
 import string
 from firebase_admin import auth as admin_auth
 from google.cloud import firestore
-
 from core.mail import send_email, send_email_admins
 
 APP_URL = None
@@ -103,14 +102,15 @@ def signup_form(db: firestore.Client):
             st.error("No se pudo crear el usuario.")
             st.exception(e)
             return
+        # Cambiado: status = "APPROVED" para operador y cliente
         db.collection("users").document(user.uid).set({
-            "email": email, "full_name": full_name, "role": role, "status": "PENDING"
+            "email": email, "full_name": full_name, "role": role, "status": "APPROVED"
         })
         send_email(email, "Registro recibido",
-                   f"#### Registro recibido\n\nHola {full_name or email},\nTu cuenta está **pendiente de aprobación**.\nAcceso: {_app_url()}")
+            f"#### Registro recibido\n\nHola {full_name or email},\nTu cuenta fue creada y está **activa**.\nAcceso: {_app_url()}")
         send_email_admins("Nuevo usuario registrado",
-                          f"#### Nuevo usuario\n\nEmail: **{email}**\nRol solicitado: **{role}**\nAcceso: {_app_url()}")
-        st.success("Registro enviado. Quedará activo cuando un admin lo apruebe.")
+            f"#### Nuevo usuario\n\nEmail: **{email}**\nRol solicitado: **{role}**\nAcceso: {_app_url()}")
+        st.success("Registro enviado. Tu cuenta ya está activa.")
 
 def ensure_admin_seed(db: firestore.Client):
     try:
@@ -149,7 +149,6 @@ def _gen_temp_password(n=12):
 def admin_users_page(db: firestore.Client, user_admin):
     st.subheader("👥 Usuarios")
     st.caption("Aprobá/rechazá pendientes. También podés crear usuarios manualmente.")
-
     with st.expander("➕ Crear usuario (manual)"):
         with st.form("create_user"):
             email = st.text_input("Email").strip().lower()
@@ -170,28 +169,6 @@ def admin_users_page(db: firestore.Client, user_admin):
                 except Exception as e:
                     st.error("No se pudo crear.")
                     st.exception(e)
-
-    st.write("### Pendientes de aprobación")
-    pending = list(db.collection("users").where("status","==","PENDING").stream())
-    for d in pending:
-        u = d.to_dict()
-        cols = st.columns([0.28,0.22,0.18,0.18,0.14])
-        cols[0].write(u.get("full_name") or "-")
-        cols[1].write(u.get("email"))
-        cols[2].write(role_badge(u.get("role")))
-        note = cols[3].text_input("Motivo rechazo (opcional)", key=f"rej_{d.id}")
-        c_apr, c_rej = cols[4].columns(2)
-        if c_apr.button("Aprobar", key=f"ap_{d.id}"):
-            d.reference.update({"status":"APPROVED"})
-            send_email(u["email"], "Cuenta aprobada",
-                       f"#### Cuenta aprobada\n\nHola {u['email']}, tu cuenta fue **aprobada** como **{u['role']}**.\nAcceso: {_app_url()}")
-            st.success("Usuario aprobado."); st.rerun()
-        if c_rej.button("Rechazar", key=f"rj_{d.id}"):
-            d.reference.update({"status":"REJECTED", "rejection_note": note})
-            send_email(u["email"], "Cuenta rechazada",
-                       f"#### Cuenta rechazada\n\nHola {u['email']}, tu registro fue **rechazado**.\nMotivo: {note or '(sin detalle)'}.\nAcceso: {_app_url()}")
-            st.warning("Usuario rechazado."); st.rerun()
-
     st.write("### Todos los usuarios")
     all_users = list(db.collection("users").stream())
     for d in all_users:
@@ -205,7 +182,7 @@ def admin_users_page(db: firestore.Client, user_admin):
             admin_auth.update_user(d.id, password=temp)
             try:
                 send_email(u.get("email"), "Restablecimiento de contraseña",
-                           f"Hola, {u.get('full_name') or ''}. Tu nueva contraseña temporal es: <b>{temp}</b>.")
+                    f"Hola, {u.get('full_name') or ''}. Tu nueva contraseña temporal es: <b>{temp}</b>.")
                 st.success("Contraseña temporal enviada por email.")
             except Exception:
                 st.warning("No se pudo enviar por email.")
