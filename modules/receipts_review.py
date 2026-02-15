@@ -11,7 +11,6 @@ def render(db, user):
     count = 0
     for ag_doc in pend:
         ag = ag_doc.to_dict()
-        # --- Nombre del convenio: NombreCompletoCliente_AAAA_MM_DD ---
         nombre_cliente = ag.get("client_name", ag.get("client_email", ""))
         fecha = ag.get("created_at")
         if hasattr(fecha, "strftime"):
@@ -21,35 +20,40 @@ def render(db, user):
         else:
             fecha_str = "fecha"
         nombre_convenio = f"{nombre_cliente}_{fecha_str}"
-        # Filtrar cuotas pendientes
+        # Solo cuotas pendientes
         items = list(ag_doc.reference.collection("installments").where("receipt_status","==","PENDING").stream())
         if not items: continue
         with st.expander(f"{nombre_convenio} — {len(items)} pendientes"):
             for inst in items:
                 d = inst.to_dict()
                 st.write(f"Cuota {d['number']} — {d['due_date']} — Total ${d['total']:,.2f}")
-                # Mostrar comprobante si existe (Cloudinary)
                 if d.get("receipt_url"):
                     st.markdown(f"{d['receipt_url']}")
                 else:
                     st.info("Sin comprobante adjunto (declaración manual).")
                 st.write(f"Nota del cliente: {d.get('receipt_note','')}")
-                # Solo mostrar opción de aprobar/rechazar si la cuota está en PENDING
-                if d.get("receipt_status") == "PENDING":
-                    note = st.text_input("Observación rechazo", key=f"note_{inst.id}")
-                    c1,c2 = st.columns(2)
-                    if c1.button("Aprobar / Marcar pagada", key=f"ok_{inst.id}"):
-                        mark_paid(inst.reference, manual_note="Marcada manualmente por operador")
-                        notify_client_receipt_decision(st, db, ag_doc, d["number"], "APROBADO", "")
-                        st.success("Pago aprobado.")
-                        if auto_complete_if_all_paid(db, ag_doc):
-                            st.success("Convenio COMPLETED.")
-                        st.rerun()
-                    if c2.button("Rechazar", key=f"rej_{inst.id}"):
-                        inst.reference.update({"receipt_status":"REJECTED","receipt_note":note or ""})
-                        notify_client_receipt_decision(st, db, ag_doc, d["number"], "RECHAZADO", note or "")
-                        st.warning("Pago rechazado.")
-                        st.rerun()
+                note = st.text_input("Observación rechazo", key=f"note_{inst.id}")
+                c1,c2 = st.columns(2)
+                if c1.button("Aprobar / Marcar pagada", key=f"ok_{inst.id}"):
+                    inst.reference.update({
+                        "receipt_status": "APPROVED",
+                        "paid": True,
+                        "paid_at": gcf.SERVER_TIMESTAMP,
+                        "receipt_note": d.get("receipt_note", "")
+                    })
+                    notify_client_receipt_decision(st, db, ag_doc, d["number"], "APROBADO", "")
+                    st.success("Pago aprobado.")
+                    if auto_complete_if_all_paid(db, ag_doc):
+                        st.success("Convenio COMPLETED.")
+                    st.rerun()
+                if c2.button("Rechazar", key=f"rej_{inst.id}"):
+                    inst.reference.update({
+                        "receipt_status": "REJECTED",
+                        "receipt_note": note or ""
+                    })
+                    notify_client_receipt_decision(st, db, ag_doc, d["number"], "RECHAZADO", note or "")
+                    st.warning("Pago rechazado.")
+                    st.rerun()
                 count += 1
     if count == 0:
         st.info("No hay comprobantes pendientes.")
