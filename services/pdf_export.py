@@ -25,7 +25,17 @@ def build_agreement_pdf(db, bucket, ag_doc, leyenda=""):
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
     story=[]
     styles=getSampleStyleSheet()
-    story.append(Paragraph(f"Convenio #{ag_doc.id}", styles["Title"]))
+    # --- Nombre del convenio: NombreCompletoCliente_AAAA_MM_DD ---
+    nombre_cliente = ag.get("client_name", ag.get("client_email", ""))
+    fecha = ag.get("created_at")
+    if hasattr(fecha, "strftime"):
+        fecha_str = fecha.strftime("%Y_%m_%d")
+    elif isinstance(fecha, str):
+        fecha_str = fecha.split("T")[0].replace("-", "_")
+    else:
+        fecha_str = "fecha"
+    nombre_convenio = f"{nombre_cliente}_{fecha_str}"
+    story.append(Paragraph(f"{nombre_convenio}", styles["Title"]))
     story.append(Spacer(1,0.2*cm))
     story.append(Paragraph(f"Cliente: {ag.get('client_email','')}", styles["Normal"]))
     story.append(Paragraph(f"Operador: {ag.get('operator_id','')}", styles["Normal"]))
