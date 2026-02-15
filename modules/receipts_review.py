@@ -20,7 +20,6 @@ def render(db, user):
         else:
             fecha_str = "fecha"
         nombre_convenio = f"{nombre_cliente}_{fecha_str}"
-        # Solo cuotas pendientes
         items = list(ag_doc.reference.collection("installments").where("receipt_status","==","PENDING").stream())
         if not items: continue
         with st.expander(f"{nombre_convenio} — {len(items)} pendientes"):
@@ -42,7 +41,7 @@ def render(db, user):
                         "receipt_note": d.get("receipt_note", "")
                     })
                     notify_client_receipt_decision(st, db, ag_doc, d["number"], "APROBADO", "")
-                    st.success("Pago aprobado.")
+                    st.success("Pago aprobado. El cliente será notificado.")
                     if auto_complete_if_all_paid(db, ag_doc):
                         st.success("Convenio COMPLETED.")
                     st.rerun()
@@ -52,8 +51,8 @@ def render(db, user):
                         "receipt_note": note or ""
                     })
                     notify_client_receipt_decision(st, db, ag_doc, d["number"], "RECHAZADO", note or "")
-                    st.warning("Pago rechazado.")
+                    st.warning("Pago rechazado. El cliente será notificado.")
                     st.rerun()
                 count += 1
     if count == 0:
-        st.info("No hay comprobantes pendientes.")
+        st.info("No hay comprobantes pendientes. ¡Todo al día!")
