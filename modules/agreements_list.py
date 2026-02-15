@@ -10,6 +10,7 @@ from services.notifications import (
     notify_agreement_rejected
 )
 from services.cloudinary_upload import upload_to_cloudinary
+from datetime import datetime
 
 def render(db, user):
     st.subheader("📄 Mis convenios")
@@ -20,8 +21,18 @@ def render(db, user):
         ag = ag_doc.to_dict()
         items = list(ag_doc.reference.collection("installments").order_by("number").stream())
         todas_pagas = all(inst.to_dict().get("paid") for inst in items)
-        # --- MENÚ DE ACCIÓN ARRIBA ---
-        with st.expander(f"Convenio #{ag_doc.id} — {ag.get('title','')}"):
+        # --- Nombre del convenio: NombreCompletoCliente_AAAA_MM_DD ---
+        nombre_cliente = ag.get("client_name", ag.get("client_email", ""))
+        fecha = ag.get("created_at")
+        if hasattr(fecha, "strftime"):
+            fecha_str = fecha.strftime("%Y_%m_%d")
+        elif isinstance(fecha, str):
+            fecha_str = fecha.split("T")[0].replace("-", "_")
+        else:
+            fecha_str = "fecha"
+        nombre_convenio = f"{nombre_cliente}_{fecha_str}"
+
+        with st.expander(f"{nombre_convenio}"):
             # OPERADOR: enviar a aprobación si está en DRAFT
             if user.get("role") == "operador" and ag.get("status") == "DRAFT":
                 if st.button("Enviar a aprobación", key=f"aprobacion_{ag_doc.id}"):
@@ -36,10 +47,10 @@ def render(db, user):
                     pdf_bytes = build_agreement_pdf(db, bucket, ag_doc, leyenda="Convenio finalizado")
                     operador_email = ag.get("operator_email") or user.get("email")
                     cliente_email = ag.get("client_email")
-                    asunto = f"Convenio #{ag_doc.id} finalizado"
+                    asunto = f"{nombre_convenio} finalizado"
                     html = f"<h4>Convenio finalizado</h4><p>Adjunto PDF con todas las cuotas pagas.</p>"
-                    send_email(operador_email, asunto, html, attachments=[(f"convenio_{ag_doc.id}.pdf", pdf_bytes, "application/pdf")])
-                    send_email(cliente_email, asunto, html, attachments=[(f"convenio_{ag_doc.id}.pdf", pdf_bytes, "application/pdf")])
+                    send_email(operador_email, asunto, html, attachments=[(f"{nombre_convenio}.pdf", pdf_bytes, "application/pdf")])
+                    send_email(cliente_email, asunto, html, attachments=[(f"{nombre_convenio}.pdf", pdf_bytes, "application/pdf")])
                     st.success("PDF generado y enviado por email al operador y cliente.")
             # CLIENTE: aceptar o rechazar convenio si está en PENDING_ACCEPTANCE
             if user.get("role") == "cliente" and ag.get("status") == "PENDING_ACCEPTANCE":
@@ -102,4 +113,4 @@ def render(db, user):
                         st.rerun()
                 # Mostrar comprobante al operador
                 if user.get("role") == "operador" and d.get("receipt_url"):
-                    st.markdown(f"[Ver comprobante]({d['receipt_url']})")
+                    st.markdown(f"{d['receipt_url']}")
