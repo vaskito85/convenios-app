@@ -17,14 +17,12 @@ def render(db, user):
             for inst in items:
                 d = inst.to_dict()
                 st.write(f"Cuota {d['number']} — {d['due_date']} — Total ${d['total']:,.2f}")
+                # Mostrar comprobante si existe (Cloudinary)
                 if d.get("receipt_url"):
-                    try:
-                        url = signed_url(get_bucket(), d["receipt_url"], minutes=15)
-                        st.markdown(url)
-                    except Exception as e:
-                        st.error(f"Link: {e}")
+                    st.markdown(f"[Ver comprobante]({d['receipt_url']})")
                 else:
-                    st.info("Sin comprobante (declaración manual).")
+                    st.info("Sin comprobante adjunto (declaración manual).")
+                st.write(f"Nota del cliente: {d.get('receipt_note','')}")
                 note = st.text_input("Observación rechazo", key=f"note_{inst.id}")
                 c1,c2 = st.columns(2)
                 if c1.button("Aprobar / Marcar pagada", key=f"ok_{inst.id}"):
