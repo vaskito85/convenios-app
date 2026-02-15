@@ -11,6 +11,11 @@ def create_agreement(db, operator_uid: str, client_email: str, client_doc,
     title: str, notes: str, principal: float,
     interest_rate: float, installments: int, method: str,
     start_date_iso: str, status: str = "DRAFT"):
+    # Extraer nombre completo del cliente
+    client_name = ""
+    if client_doc:
+        client_data = client_doc.to_dict()
+        client_name = client_data.get("full_name", "")
     ag_ref = db.collection("agreements").document()
     ag_ref.set({
         "title": title,
@@ -18,6 +23,7 @@ def create_agreement(db, operator_uid: str, client_email: str, client_doc,
         "operator_id": operator_uid,
         "client_id": client_doc.id if client_doc else None,
         "client_email": client_email,
+        "client_name": client_name,
         "principal": round(principal,2),
         "interest_rate": interest_rate,
         "installments": int(installments),
