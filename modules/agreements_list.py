@@ -90,8 +90,8 @@ def render(db, user):
                         mark_unpaid(inst.reference)
                         st.warning("Cuota revertida a impaga.")
                         st.rerun()
-                # CLIENTE: declarar pago y subir comprobante
-                if user.get("role") == "cliente" and not d.get("paid"):
+                # CLIENTE: declarar pago y subir comprobante SOLO si no está pendiente/aprobada/rechazada
+                if user.get("role") == "cliente" and not d.get("paid") and d.get("receipt_status") not in ["PENDING", "APPROVED", "REJECTED"]:
                     st.markdown("**¿Pagaste esta cuota?**")
                     comprobante = st.file_uploader(
                         f"Subí tu comprobante para cuota {d['number']} (PDF/JPG/PNG)", 
