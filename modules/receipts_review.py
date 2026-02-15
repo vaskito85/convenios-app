@@ -11,9 +11,20 @@ def render(db, user):
     count = 0
     for ag_doc in pend:
         ag = ag_doc.to_dict()
+        # --- Nombre del convenio: NombreCompletoCliente_AAAA_MM_DD ---
+        nombre_cliente = ag.get("client_name", ag.get("client_email", ""))
+        fecha = ag.get("created_at")
+        if hasattr(fecha, "strftime"):
+            fecha_str = fecha.strftime("%Y_%m_%d")
+        elif isinstance(fecha, str):
+            fecha_str = fecha.split("T")[0].replace("-", "_")
+        else:
+            fecha_str = "fecha"
+        nombre_convenio = f"{nombre_cliente}_{fecha_str}"
+        # Filtrar cuotas pendientes
         items = list(ag_doc.reference.collection("installments").where("receipt_status","==","PENDING").stream())
         if not items: continue
-        with st.expander(f"Convenio #{ag_doc.id} — {len(items)} pendientes"):
+        with st.expander(f"{nombre_convenio} — {len(items)} pendientes"):
             for inst in items:
                 d = inst.to_dict()
                 st.write(f"Cuota {d['number']} — {d['due_date']} — Total ${d['total']:,.2f}")
