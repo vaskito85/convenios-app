@@ -4,7 +4,12 @@ from services.installments import mark_paid, mark_unpaid
 from core.firebase import get_bucket
 from services.pdf_export import build_agreement_pdf
 from core.mail import send_email
-from services.notifications import notify_agreement_sent, notify_agreement_accepted, notify_agreement_rejected
+from services.notifications import (
+    notify_agreement_sent,
+    notify_agreement_accepted,
+    notify_agreement_rejected
+)
+from services.cloudinary_upload import upload_to_cloudinary
 
 def render(db, user):
     st.subheader("📄 Mis convenios")
@@ -74,3 +79,27 @@ def render(db, user):
                         mark_unpaid(inst.reference)
                         st.warning("Cuota revertida a impaga.")
                         st.rerun()
+                # CLIENTE: declarar pago y subir comprobante
+                if user.get("role") == "cliente" and not d.get("paid"):
+                    st.markdown("**¿Pagaste esta cuota?**")
+                    comprobante = st.file_uploader(
+                        f"Subí tu comprobante para cuota {d['number']} (PDF/JPG/PNG)", 
+                        type=["pdf", "jpg", "jpeg", "png"], 
+                        key=f"comprobante_{inst.id}"
+                    )
+                    nota_cliente = st.text_input("Nota para el operador (opcional)", key=f"nota_{inst.id}")
+                    if st.button(f"Declarar pago cuota {d['number']}", key=f"declarar_pago_{inst.id}"):
+                        url_comprobante = None
+                        if comprobante is not None:
+                            url_comprobante = upload_to_cloudinary(comprobante, comprobante.name)
+                        inst.reference.update({
+                            "receipt_status": "PENDING",
+                            "receipt_url": url_comprobante,
+                            "receipt_note": nota_cliente,
+                            "paid": False
+                        })
+                        st.success("¡Pago declarado! El operador revisará tu comprobante.")
+                        st.rerun()
+                # Mostrar comprobante al operador
+                if user.get("role") == "operador" and d.get("receipt_url"):
+                    st.markdown(f"[Ver comprobante]({d['receipt_url']})")
