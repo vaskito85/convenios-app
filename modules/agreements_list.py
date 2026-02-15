@@ -17,11 +17,18 @@ def render(db, user):
     ags = list_agreements_for_role(db, user)
     if not ags:
         st.info("No tenés convenios todavía."); return
+
+    # --- Resumen visual de convenios ---
     for ag_doc in ags:
         ag = ag_doc.to_dict()
         items = list(ag_doc.reference.collection("installments").order_by("number").stream())
-        todas_pagas = all(inst.to_dict().get("paid") for inst in items)
-        # --- Nombre del convenio: NombreCompletoCliente_AAAA_MM_DD ---
+        pagas = sum(1 for inst in items if inst.to_dict().get("paid"))
+        impagas = len(items) - pagas
+        estado = ag.get("status", "DRAFT")
+        fecha_inicio = ag.get("start_date", "-")
+        fechas = [inst.to_dict().get("due_date") for inst in items]
+        proxima = next((f for f, inst in zip(fechas, items) if not inst.to_dict().get("paid")), "-")
+        ultima = fechas[-1] if fechas else "-"
         nombre_cliente = ag.get("client_name", ag.get("client_email", ""))
         fecha = ag.get("created_at")
         if hasattr(fecha, "strftime"):
@@ -32,6 +39,24 @@ def render(db, user):
             fecha_str = "fecha"
         nombre_convenio = f"{nombre_cliente}_{fecha_str}"
 
+        badge_color = {
+            "DRAFT": "gray",
+            "PENDING_ACCEPTANCE": "orange",
+            "ACTIVE": "green",
+            "COMPLETED": "blue",
+            "REJECTED": "red"
+        }.get(estado, "gray")
+
+        st.markdown(
+            f"""
+            <div style="border:1px solid #ddd;padding:8px;margin-bottom:4px;border-radius:6px;">
+            <b>{nombre_convenio}</b> <span style="color:{badge_color};font-weight:bold;">[{estado}]</span><br>
+            Cuotas pagas: <b>{pagas}</b> | Cuotas impagas: <b>{impagas}</b><br>
+            Inicio: <b>{fecha_inicio}</b> | Próxima cuota: <b>{proxima}</b> | Última cuota: <b>{ultima}</b>
+            </div>
+            """, unsafe_allow_html=True
+        )
+
         with st.expander(f"{nombre_convenio}"):
             # OPERADOR: enviar a aprobación si está en DRAFT
             if user.get("role") == "operador" and ag.get("status") == "DRAFT":
@@ -41,7 +66,7 @@ def render(db, user):
                     st.success("Convenio enviado a aprobación.")
                     st.rerun()
             # OPERADOR: finalizar convenio y enviar PDF
-            if user.get("role")=="operador" and todas_pagas and ag.get("status") != "COMPLETED":
+            if user.get("role")=="operador" and pagas == len(items) and ag.get("status") != "COMPLETED":
                 if st.button("Finalizar convenio y enviar PDF", key=f"finalizar_{ag_doc.id}"):
                     bucket = get_bucket()
                     pdf_bytes = build_agreement_pdf(db, bucket, ag_doc, leyenda="Convenio finalizado")
@@ -109,7 +134,7 @@ def render(db, user):
                             "receipt_note": nota_cliente,
                             "paid": False
                         })
-                        st.success("¡Pago declarado! El operador revisará tu comprobante.")
+                        st.success("¡Pago declarado correctamente! El operador recibirá tu comprobante y te notificará cuando lo apruebe o rechace.")
                         st.rerun()
                 # Mostrar comprobante al operador
                 if user.get("role") == "operador" and d.get("receipt_url"):
