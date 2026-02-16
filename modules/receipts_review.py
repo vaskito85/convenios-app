@@ -25,9 +25,20 @@ def render(db, user):
         with st.expander(f"{nombre_convenio} — {len(items)} pendientes"):
             for inst in items:
                 d = inst.to_dict()
-                st.write(f"Cuota {d['number']} — {d['due_date']} — Total ${d['total']:,.2f}")
+                # Visual mejorada para cada cuota pendiente
+                color_bg = "#fffbe6"
+                color_title = "#ff9800"
+                st.markdown(
+                    f"""
+                    <div style="background:{color_bg};border:1px solid #ffd54f;padding:10px;margin-bottom:8px;border-radius:8px;">
+                    <span style="font-size:1.1em;font-weight:bold;color:{color_title};">Cuota {d['number']} (Pendiente de aprobación)</span>
+                    <span style="float:right;color:#c62828;font-weight:bold;">Total: ${d['total']:,.2f}</span><br>
+                    <span style="font-size:0.95em;">Vencimiento: <b>{d['due_date']}</b></span><br>
+                    </div>
+                    """, unsafe_allow_html=True
+                )
                 if d.get("receipt_url"):
-                    st.markdown(f"{d['receipt_url']}")
+                    st.markdown(f"**Comprobante:** [Ver archivo]({d['receipt_url']})")
                 else:
                     st.info("Sin comprobante adjunto (declaración manual).")
                 st.write(f"Nota del cliente: {d.get('receipt_note','')}")
@@ -41,7 +52,7 @@ def render(db, user):
                         "receipt_note": d.get("receipt_note", "")
                     })
                     notify_client_receipt_decision(st, db, ag_doc, d["number"], "APROBADO", "")
-                    st.success("Pago aprobado. El cliente será notificado.")
+                    st.success("Pago aprobado. El cliente será notificado y la cuota se marcará como pagada.")
                     if auto_complete_if_all_paid(db, ag_doc):
                         st.success("Convenio COMPLETED.")
                     st.rerun()
