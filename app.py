@@ -61,7 +61,7 @@ def main():
     menu += ["📄 Mis convenios"]
     if user.get("role")=="cliente" and pendientes_cliente > 0:
         menu += [f"⏳ Convenios por aceptar ({pendientes_cliente})"]
-    menu += [" 🔒 Mi contraseña"]
+    menu += ["🔒 Mi contraseña"]
     if user.get("role")=="admin":
         menu += ["👥 Usuarios (admin)"]
 
@@ -91,4 +91,5 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
