@@ -52,10 +52,11 @@ def build_agreement_pdf(db, bucket, ag_doc, leyenda=""):
     story.append(Paragraph("Calendario de cuotas", styles["Heading2"]))
     tbl = Table(rows, colWidths=[2*cm, 3*cm, 3*cm, 3*cm, 3*cm, 2.5*cm])
     tbl.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),colors.lightgrey),
+        ("BACKGROUND",(0,0),(-1,0),colors.lightblue),
         ("GRID",(0,0),(-1,-1),0.5,colors.grey),
         ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
         ("FONTNAME",(1,-1),(-1,-1),"Helvetica-Bold"),
+        ("BACKGROUND",(0,1),(-1,-1),colors.whitesmoke),
         ("TEXTCOLOR",(5,1),(-1,-1),colors.green),  # Estado pagada en verde
         ("TEXTCOLOR",(5,0),(-1,0),colors.black),
     ]))
