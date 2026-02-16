@@ -29,6 +29,7 @@ st.markdown("""
     .stTextInput>div>input {border-radius:8px;}
     .stFileUploader>div {border-radius:8px;}
     .menu-icon {margin-right:8px;}
+    .sidebar-content {font-size:1.05em;}
     </style>
     <div style="background:#1976d2;padding:18px 0 10px 0;border-radius:0 0 12px 12px;margin-bottom:10px;">
         <h2 style="color:white;text-align:center;margin:0;">💳 Asistente de Convenios de Pago</h2>
@@ -52,7 +53,7 @@ def main():
     pendientes_cliente = get_pendientes_convenios_cliente(db, user) if user.get("role")=="cliente" else 0
     menu = []
     if user.get("role")=="admin":
-        menu += ["🗂️ Panel (admin)","⚙️ Configuración"]
+        menu += ["🗂️ Panel (admin)", "⚙️ Configuración"]
     if user.get("role")=="operador":
         menu += ["📊 Panel (operador)", f"📥 Comprobantes ({pendientes})"]
     if user.get("role") in ["admin","operador"]:
@@ -63,7 +64,14 @@ def main():
     menu += ["🔒 Mi contraseña"]
     if user.get("role")=="admin":
         menu += ["👥 Usuarios (admin)"]
-    choice = st.sidebar.radio("Menú", menu, key="menu_radio")
+
+    # --- Sidebar radio con alineación consistente ---
+    with st.sidebar:
+        st.markdown('<div class="sidebar-content">', unsafe_allow_html=True)
+        choice = st.radio("Menú", menu, key="menu_radio")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # --- Mapping del menú ---
     if choice.endswith("Panel (admin)"):
         dashboard_admin.render(db)
     elif choice.endswith("Panel (operador)"):
@@ -74,7 +82,7 @@ def main():
         agreements_create.render(db, user)
     elif choice.startswith("📥 Comprobantes"):
         receipts_review.render(db, user)
-    elif choice.startswith("Mis convenios") or choice.startswith("⏳ Convenios por aceptar"):
+    elif choice.startswith("📄 Mis convenios") or choice.startswith("⏳ Convenios por aceptar"):
         agreements_list.render(db, user)
     elif choice.endswith("Mi contraseña"):
         change_password_page(user)
