@@ -22,6 +22,19 @@ def get_pendientes_convenios_cliente(db, user):
 
 st.set_page_config(page_title="Asistente de Convenios de Pago", page_icon="💳", layout="wide")
 
+# --- Cabecera visual ---
+st.markdown("""
+    <style>
+    .stButton>button {font-size:1em;padding:8px 18px;border-radius:8px;}
+    .stTextInput>div>input {border-radius:8px;}
+    .stFileUploader>div {border-radius:8px;}
+    .menu-icon {margin-right:8px;}
+    </style>
+    <div style="background:#1976d2;padding:18px 0 10px 0;border-radius:0 0 12px 12px;margin-bottom:10px;">
+        <h2 style="color:white;text-align:center;margin:0;">💳 Asistente de Convenios de Pago</h2>
+    </div>
+""", unsafe_allow_html=True)
+
 def main():
     init_firebase()
     db = get_db()
@@ -34,37 +47,38 @@ def main():
         with tab_signup: signup_form(db)
         st.stop()
     header(user)
-    menu=[]
+    # --- Menú lateral con iconos y badges ---
     pendientes = get_pendientes_comprobantes(db, user) if user.get("role")=="operador" else 0
     pendientes_cliente = get_pendientes_convenios_cliente(db, user) if user.get("role")=="cliente" else 0
+    menu = []
     if user.get("role")=="admin":
-        menu += ["Panel (admin)","Configuración"]
+        menu += ["🗂️ Panel (admin)","⚙️ Configuración"]
     if user.get("role")=="operador":
-        menu += ["Panel (operador)", f"Comprobantes ({pendientes})"]
+        menu += ["📊 Panel (operador)", f"📥 Comprobantes ({pendientes})"]
     if user.get("role") in ["admin","operador"]:
-        menu += ["Crear convenio"]
-    menu += ["Mis convenios"]
+        menu += ["📝 Crear convenio"]
+    menu += ["📄 Mis convenios"]
     if user.get("role")=="cliente" and pendientes_cliente > 0:
-        menu += [f"Convenios por aceptar ({pendientes_cliente})"]
-    menu += ["Mi contraseña"]
+        menu += [f"⏳ Convenios por aceptar ({pendientes_cliente})"]
+    menu += ["🔒 Mi contraseña"]
     if user.get("role")=="admin":
-        menu += ["Usuarios (admin)"]
+        menu += ["👥 Usuarios (admin)"]
     choice = st.sidebar.radio("Menú", menu, key="menu_radio")
-    if choice=="Panel (admin)":
+    if choice.endswith("Panel (admin)"):
         dashboard_admin.render(db)
-    elif choice=="Panel (operador)":
+    elif choice.endswith("Panel (operador)"):
         dashboard_operator.render(db, user)
-    elif choice=="Configuración":
+    elif choice.endswith("Configuración"):
         page_settings.render(db)
-    elif choice=="Crear convenio":
+    elif choice.endswith("Crear convenio"):
         agreements_create.render(db, user)
-    elif choice.startswith("Comprobantes"):
+    elif choice.startswith("📥 Comprobantes"):
         receipts_review.render(db, user)
-    elif choice=="Mis convenios" or choice.startswith("Convenios por aceptar"):
+    elif choice.startswith("Mis convenios") or choice.startswith("⏳ Convenios por aceptar"):
         agreements_list.render(db, user)
-    elif choice=="Mi contraseña":
+    elif choice.endswith("Mi contraseña"):
         change_password_page(user)
-    elif choice=="Usuarios (admin)":
+    elif choice.endswith("Usuarios (admin)"):
         admin_users_page(db, user)
 
 if __name__=="__main__":
