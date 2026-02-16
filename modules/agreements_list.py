@@ -39,20 +39,28 @@ def render(db, user):
             fecha_str = "fecha"
         nombre_convenio = f"{nombre_cliente}_{fecha_str}"
 
+        icono_estado = {
+            "DRAFT": "📝",
+            "PENDING_ACCEPTANCE": "⏳",
+            "ACTIVE": "✅",
+            "COMPLETED": "🏁",
+            "REJECTED": "❌"
+        }.get(estado, "📄")
         badge_color = {
-            "DRAFT": "gray",
-            "PENDING_ACCEPTANCE": "orange",
-            "ACTIVE": "green",
-            "COMPLETED": "blue",
-            "REJECTED": "red"
-        }.get(estado, "gray")
+            "DRAFT": "#888",
+            "PENDING_ACCEPTANCE": "#ff9800",
+            "ACTIVE": "#2e7d32",
+            "COMPLETED": "#1976d2",
+            "REJECTED": "#c62828"
+        }.get(estado, "#888")
 
         st.markdown(
             f"""
-            <div style="border:1px solid #ddd;padding:8px;margin-bottom:4px;border-radius:6px;">
-            <b>{nombre_convenio}</b> <span style="color:{badge_color};font-weight:bold;">[{estado}]</span><br>
-            Cuotas pagas: <b>{pagas}</b> | Cuotas impagas: <b>{impagas}</b><br>
-            Inicio: <b>{fecha_inicio}</b> | Próxima cuota: <b>{proxima}</b> | Última cuota: <b>{ultima}</b>
+            <div style="border:2px solid #1976d2;padding:12px;margin-bottom:8px;border-radius:10px;background:#f5f5f5;">
+            <span style="font-size:1.2em;font-weight:bold;">{icono_estado} {nombre_convenio}</span>
+            <span style="float:right;color:{badge_color};font-weight:bold;">[{estado}]</span><br>
+            <span style="font-size:0.98em;">Cuotas pagas: <b>{pagas}</b> | Cuotas impagas: <b>{impagas}</b></span><br>
+            <span style="font-size:0.98em;">Inicio: <b>{fecha_inicio}</b> | Próxima cuota: <b>{proxima}</b> | Última cuota: <b>{ultima}</b></span>
             </div>
             """, unsafe_allow_html=True
         )
@@ -102,33 +110,31 @@ def render(db, user):
             st.write(f"Estado: {ag.get('status','DRAFT')}")
             for inst in items:
                 d = inst.to_dict()
-                # Color según estado
                 color_bg = "#eafaf1" if d.get("paid") else "#faeaea"
                 color_title = "#2e7d32" if d.get("paid") else "#c62828"
                 estado_cuota = "Pagada" if d.get("paid") else "Impaga"
-                color_estado = "#2e7d32" if d.get("paid") else "#c62828"
+                icono_cuota = "✔️" if d.get("paid") else "⏳"
                 st.markdown(
                     f"""
-                    <div style="background:{color_bg};border:1px solid #ddd;padding:10px;margin-bottom:8px;border-radius:8px;">
-                    <span style="font-size:1.1em;font-weight:bold;color:{color_title};">Cuota {d['number']}</span>
-                    <span style="float:right;color:{color_estado};font-weight:bold;">{estado_cuota}</span><br>
-                    <span style="font-size:0.95em;">Vencimiento: <b>{d['due_date']}</b> | Total: <b>${d['total']:,.2f}</b></span><br>
+                    <div style="background:{color_bg};border:1.5px solid #ddd;padding:12px;margin-bottom:10px;border-radius:10px;">
+                    <span style="font-size:1.1em;font-weight:bold;color:{color_title};">{icono_cuota} Cuota {d['number']}</span>
+                    <span style="float:right;color:{color_title};font-weight:bold;">{estado_cuota}</span><br>
+                    <span style="font-size:0.97em;">Vencimiento: <b>{d['due_date']}</b> | Total: <b>${d['total']:,.2f}</b></span>
                     </div>
                     """, unsafe_allow_html=True
                 )
                 # Botones y acciones
                 if user.get("role")=="operador" and not d.get("paid"):
-                    if st.button(f"Marcar pagada cuota {d['number']} (manual)", key=f"paid_{inst.id}"):
+                    colA, colB = st.columns(2)
+                    if colA.button(f"Marcar pagada cuota {d['number']} (manual)", key=f"paid_{inst.id}"):
                         mark_paid(inst.reference, manual_note="Marcada manualmente por operador")
-                        st.success("Cuota marcada como pagada.")
+                        st.success("✔️ Cuota marcada como pagada.")
                         st.rerun()
-                # Solo operador/admin pueden revertir
                 if d.get("paid") and user.get("role") in ["operador", "admin"]:
                     if st.button(f"Revertir cuota {d['number']}", key=f"unpaid_{inst.id}"):
                         mark_unpaid(inst.reference)
-                        st.warning("Cuota revertida a impaga.")
+                        st.warning("⏪ Cuota revertida a impaga.")
                         st.rerun()
-                # Cliente: declarar pago y subir comprobante SOLO si no está pendiente/aprobada/rechazada
                 if user.get("role") == "cliente" and not d.get("paid") and d.get("receipt_status") not in ["PENDING", "APPROVED", "REJECTED"]:
                     st.markdown("**¿Pagaste esta cuota?**")
                     comprobante = st.file_uploader(
@@ -149,6 +155,5 @@ def render(db, user):
                         })
                         st.success("¡Pago declarado correctamente! El operador recibirá tu comprobante y te notificará cuando lo apruebe o rechace.")
                         st.rerun()
-                # Mostrar comprobante al operador
                 if user.get("role") == "operador" and d.get("receipt_url"):
                     st.markdown(f"{d['receipt_url']}")
