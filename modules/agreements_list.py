@@ -102,20 +102,33 @@ def render(db, user):
             st.write(f"Estado: {ag.get('status','DRAFT')}")
             for inst in items:
                 d = inst.to_dict()
-                st.write(f"Cuota {d['number']} — {d['due_date']} — Total ${d['total']:,.2f}")
-                st.write(f"Pagada: {'Sí' if d.get('paid') else 'No'}")
-                # Permite al operador marcar como pagada sin intervención del cliente
+                # Color según estado
+                color_bg = "#eafaf1" if d.get("paid") else "#faeaea"
+                color_title = "#2e7d32" if d.get("paid") else "#c62828"
+                estado_cuota = "Pagada" if d.get("paid") else "Impaga"
+                color_estado = "#2e7d32" if d.get("paid") else "#c62828"
+                st.markdown(
+                    f"""
+                    <div style="background:{color_bg};border:1px solid #ddd;padding:10px;margin-bottom:8px;border-radius:8px;">
+                    <span style="font-size:1.1em;font-weight:bold;color:{color_title};">Cuota {d['number']}</span>
+                    <span style="float:right;color:{color_estado};font-weight:bold;">{estado_cuota}</span><br>
+                    <span style="font-size:0.95em;">Vencimiento: <b>{d['due_date']}</b> | Total: <b>${d['total']:,.2f}</b></span><br>
+                    </div>
+                    """, unsafe_allow_html=True
+                )
+                # Botones y acciones
                 if user.get("role")=="operador" and not d.get("paid"):
                     if st.button(f"Marcar pagada cuota {d['number']} (manual)", key=f"paid_{inst.id}"):
                         mark_paid(inst.reference, manual_note="Marcada manualmente por operador")
                         st.success("Cuota marcada como pagada.")
                         st.rerun()
-                if d.get("paid"):
+                # Solo operador/admin pueden revertir
+                if d.get("paid") and user.get("role") in ["operador", "admin"]:
                     if st.button(f"Revertir cuota {d['number']}", key=f"unpaid_{inst.id}"):
                         mark_unpaid(inst.reference)
                         st.warning("Cuota revertida a impaga.")
                         st.rerun()
-                # CLIENTE: declarar pago y subir comprobante SOLO si no está pendiente/aprobada/rechazada
+                # Cliente: declarar pago y subir comprobante SOLO si no está pendiente/aprobada/rechazada
                 if user.get("role") == "cliente" and not d.get("paid") and d.get("receipt_status") not in ["PENDING", "APPROVED", "REJECTED"]:
                     st.markdown("**¿Pagaste esta cuota?**")
                     comprobante = st.file_uploader(
