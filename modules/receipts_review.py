@@ -25,7 +25,6 @@ def render(db, user):
         with st.expander(f"{nombre_convenio} — {len(items)} pendientes"):
             for inst in items:
                 d = inst.to_dict()
-                # Visual mejorada para cada cuota pendiente
                 color_bg = "#fffbe6"
                 color_title = "#ff9800"
                 st.markdown(
@@ -38,7 +37,7 @@ def render(db, user):
                     """, unsafe_allow_html=True
                 )
                 if d.get("receipt_url"):
-                    st.markdown(f"**Comprobante:** [Ver archivo]({d['receipt_url']})")
+                    st.markdown(f"**Comprobante:** {d['receipt_url']}")
                 else:
                     st.info("Sin comprobante adjunto (declaración manual).")
                 st.write(f"Nota del cliente: {d.get('receipt_note','')}")
