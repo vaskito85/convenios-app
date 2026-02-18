@@ -11,6 +11,18 @@ def render(db, user, ag_doc):
         return
 
     ag = ag_doc.to_dict()
+    # Mostrar el nombre del convenio (ID/nombre)
+    nombre_cliente = ag.get("client_name", ag.get("client_email", ""))
+    fecha = ag.get("created_at")
+    if hasattr(fecha, "strftime"):
+        fecha_str = fecha.strftime("%Y_%m_%d")
+    elif isinstance(fecha, str):
+        fecha_str = fecha.split("T")[0].replace("-", "_")
+    else:
+        fecha_str = "fecha"
+    nombre_convenio = f"{nombre_cliente}_{fecha_str}"
+    st.markdown(f"<div style='font-size:1.1em;font-weight:bold;color:#1976d2;margin-bottom:10px;'>Convenio: {nombre_convenio}</div>", unsafe_allow_html=True)
+
     cfg = get_settings(db)
     client_email = st.text_input("Email del cliente", value=ag.get("client_email","")).strip().lower()
     title = st.text_input("Título del convenio", value=ag.get("title",""))
