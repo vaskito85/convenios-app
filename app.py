@@ -49,13 +49,6 @@ def main():
         st.stop()
     header(user)
 
-    # Navegación directa a edición si edit_agreement_id está presente
-    if "edit_agreement_id" in st.session_state and st.session_state["edit_agreement_id"]:
-        ag_id = st.session_state["edit_agreement_id"]
-        ag_doc = db.collection("agreements").document(ag_id).get()
-        agreement_edit.render(db, user, ag_doc)
-        return
-
     pendientes = get_pendientes_comprobantes(db, user) if user.get("role")=="operador" else 0
     pendientes_cliente = get_pendientes_convenios_cliente(db, user) if user.get("role")=="cliente" else 0
     menu = []
