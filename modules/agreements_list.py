@@ -92,7 +92,7 @@ def render(db, user):
                     st.info("Puedes modificar el convenio y volver a enviarlo al cliente.")
                     if st.button("Modificar convenio y reenviar", key=f"modificar_{ag_doc.id}"):
                         st.session_state["edit_agreement_id"] = ag_doc.id
-                        return  # Detiene el render y permite que app.py muestre la página de edición
+                        st.experimental_rerun()
                 continue
 
             if user.get("role") == "operador" and ag.get("status") == "DRAFT":
