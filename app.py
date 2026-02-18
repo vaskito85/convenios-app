@@ -3,7 +3,7 @@ from core.firebase import init_firebase, get_db
 from core.auth import ensure_admin_seed, get_current_user, login_form, signup_form, admin_users_page
 from modules.common import header, change_password_page
 from modules import settings as page_settings
-from modules import dashboard_admin, dashboard_operator, agreements_create, agreements_list, receipts_review
+from modules import dashboard_admin, dashboard_operator, agreements_create, agreements_list, receipts_review, agreement_edit
 
 def get_pendientes_comprobantes(db, user):
     count = 0
@@ -48,6 +48,11 @@ def main():
         with tab_signup: signup_form(db)
         st.stop()
     header(user)
+    # --- Si hay convenio a editar, mostrar la página de edición ---
+    if "edit_agreement_id" in st.session_state:
+        ag_doc = db.collection("agreements").document(st.session_state["edit_agreement_id"]).get()
+        agreement_edit.render(db, user, ag_doc)
+        return
     # --- Menú lateral con iconos y badges ---
     pendientes = get_pendientes_comprobantes(db, user) if user.get("role")=="operador" else 0
     pendientes_cliente = get_pendientes_convenios_cliente(db, user) if user.get("role")=="cliente" else 0
@@ -65,13 +70,11 @@ def main():
     if user.get("role")=="admin":
         menu += ["👥 Usuarios (admin)"]
 
-    # --- Sidebar radio con alineación consistente ---
     with st.sidebar:
         st.markdown('<div class="sidebar-content">', unsafe_allow_html=True)
         choice = st.radio("Menú", menu, key="menu_radio")
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- Mapping del menú ---
     if choice.endswith("Panel (admin)"):
         dashboard_admin.render(db)
     elif choice.endswith("Panel (operador)"):
@@ -91,5 +94,3 @@ def main():
 
 if __name__=="__main__":
     main()
-
-
