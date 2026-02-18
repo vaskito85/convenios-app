@@ -29,5 +29,7 @@ def render(db, user, ag_doc):
             "rejection_note": "",
         })
         st.success("Convenio modificado y reenviado para aceptación.")
-        del st.session_state["edit_agreement_id"]
-        st.experimental_rerun()
+        # Elimina la variable de sesión para volver al menú normal
+        if "edit_agreement_id" in st.session_state:
+            del st.session_state["edit_agreement_id"]
+        # No hagas st.experimental_rerun() aquí
