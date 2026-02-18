@@ -12,6 +12,9 @@ from services.notifications import (
 from services.cloudinary_upload import upload_to_cloudinary
 from datetime import datetime
 
+MAX_MB = 5
+ALLOWED_MIME = {"application/pdf","image/jpeg","image/png"}
+
 def render(db, user):
     st.subheader("📄 Mis convenios")
     ags = list_agreements_for_role(db, user)
@@ -53,9 +56,8 @@ def render(db, user):
             "REJECTED": "#c62828"
         }.get(estado, "#888")
 
-        # --- Bloque visual de estado mejorado (modo oscuro y claro) ---
-        bg_block = "#222"  # Fondo oscuro
-        text_block = "#fff"  # Letras claras
+        bg_block = "#222"
+        text_block = "#fff"
         st.markdown(
             f"""
             <div style="border:2px solid {badge_color};background:{bg_block};padding:16px 12px 12px 12px;margin-bottom:8px;border-radius:12px;display:flex;align-items:center;">
@@ -66,7 +68,6 @@ def render(db, user):
             """, unsafe_allow_html=True
         )
 
-        # --- Resumen visual debajo del bloque de estado ---
         st.markdown(
             f"""
             <div style="border:1px solid #444;padding:8px;margin-bottom:4px;border-radius:6px;background:#282828;color:#fff;">
@@ -87,16 +88,14 @@ def render(db, user):
                     </div>
                     """, unsafe_allow_html=True
                 )
-                continue  # No mostrar nada más para este convenio
+                continue
 
-            # OPERADOR: enviar a aprobación si está en DRAFT
             if user.get("role") == "operador" and ag.get("status") == "DRAFT":
                 if st.button("Enviar a aprobación", key=f"aprobacion_{ag_doc.id}"):
                     ag_doc.reference.update({"status": "PENDING_ACCEPTANCE"})
                     notify_agreement_sent(st, db, ag_doc)
                     st.success("Convenio enviado a aprobación.")
                     st.rerun()
-            # OPERADOR: finalizar convenio y enviar PDF
             if user.get("role")=="operador" and pagas == len(items) and ag.get("status") != "COMPLETED":
                 if st.button("Finalizar convenio y enviar PDF", key=f"finalizar_{ag_doc.id}"):
                     bucket = get_bucket()
@@ -108,7 +107,6 @@ def render(db, user):
                     send_email(operador_email, asunto, html, attachments=[(f"{nombre_convenio}.pdf", pdf_bytes, "application/pdf")])
                     send_email(cliente_email, asunto, html, attachments=[(f"{nombre_convenio}.pdf", pdf_bytes, "application/pdf")])
                     st.success("PDF generado y enviado por email al operador y cliente.")
-            # CLIENTE: aceptar o rechazar convenio si está en PENDING_ACCEPTANCE
             if user.get("role") == "cliente" and ag.get("status") == "PENDING_ACCEPTANCE":
                 col1, col2 = st.columns(2)
                 if col1.button("Aceptar convenio", key=f"aceptar_{ag_doc.id}"):
@@ -122,14 +120,12 @@ def render(db, user):
                     notify_agreement_rejected(st, db, ag_doc.reference, motivo_rechazo)
                     st.warning("Convenio rechazado.")
                     st.rerun()
-            # ADMIN: eliminar convenio
             if user.get("role") == "admin":
                 if st.button("❌ Eliminar convenio", key=f"del_ag_{ag_doc.id}"):
                     bucket = get_bucket()
                     delete_agreement(db, bucket, ag_doc)
                     st.warning("Convenio eliminado.")
                     st.rerun()
-            # --- CONTENIDO DEL CONVENIO ---
             st.write(f"Estado: {ag.get('status','DRAFT')}")
             for inst in items:
                 d = inst.to_dict()
@@ -147,7 +143,6 @@ def render(db, user):
                     </div>
                     """, unsafe_allow_html=True
                 )
-                # Botones y acciones
                 if user.get("role")=="operador" and not d.get("paid"):
                     colA, colB = st.columns(2)
                     if colA.button(f"Marcar pagada cuota {d['number']} (manual)", key=f"paid_{inst.id}"):
@@ -159,6 +154,7 @@ def render(db, user):
                         mark_unpaid(inst.reference)
                         st.warning("⏪ Cuota revertida a impaga.")
                         st.rerun()
+                # Cliente: declarar pago y subir comprobante SOLO si no está pendiente/aprobada/rechazada
                 if user.get("role") == "cliente" and not d.get("paid") and d.get("receipt_status") not in ["PENDING", "APPROVED", "REJECTED"]:
                     st.markdown("**¿Pagaste esta cuota?**")
                     comprobante = st.file_uploader(
@@ -167,6 +163,14 @@ def render(db, user):
                         key=f"comprobante_{inst.id}"
                     )
                     nota_cliente = st.text_input("Nota para el operador (opcional)", key=f"nota_{inst.id}")
+                    if comprobante is not None:
+                        size_mb = comprobante.size / (1024*1024)
+                        if size_mb > MAX_MB:
+                            st.error(f"El archivo excede {MAX_MB} MB.")
+                            continue
+                        if comprobante.type not in ALLOWED_MIME:
+                            st.error("Tipo de archivo no permitido.")
+                            continue
                     if st.button(f"Declarar pago cuota {d['number']}", key=f"declarar_pago_{inst.id}"):
                         url_comprobante = None
                         if comprobante is not None:
@@ -179,5 +183,6 @@ def render(db, user):
                         })
                         st.success("¡Pago declarado correctamente! El operador recibirá tu comprobante y te notificará cuando lo apruebe o rechace.")
                         st.rerun()
-                if user.get("role") == "operador" and d.get("receipt_url"):
+                # Control de acceso: solo operador y cliente ven el comprobante
+                if user.get("role") in ["operador", "cliente"] and d.get("receipt_url"):
                     st.markdown(f"{d['receipt_url']}")
