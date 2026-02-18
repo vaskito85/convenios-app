@@ -53,13 +53,15 @@ def render(db, user):
             "REJECTED": "#c62828"
         }.get(estado, "#888")
 
-        # --- Bloque visual de estado mejorado ---
+        # --- Bloque visual de estado mejorado (modo oscuro y claro) ---
+        bg_block = "#222"  # Fondo oscuro
+        text_block = "#fff"  # Letras claras
         st.markdown(
             f"""
-            <div style="border:2px solid {badge_color};background:#f5f5f5;padding:16px 12px 12px 12px;margin-bottom:8px;border-radius:12px;display:flex;align-items:center;">
-                <span style="font-size:1.3em;font-weight:bold;margin-right:12px;">{icono_estado}</span>
-                <span style="font-size:1.15em;font-weight:bold;">{nombre_convenio}</span>
-                <span style="margin-left:auto;font-size:1.1em;font-weight:bold;color:{badge_color};background:white;padding:4px 12px;border-radius:8px;border:1.5px solid {badge_color};">{estado}</span>
+            <div style="border:2px solid {badge_color};background:{bg_block};padding:16px 12px 12px 12px;margin-bottom:8px;border-radius:12px;display:flex;align-items:center;">
+                <span style="font-size:1.3em;font-weight:bold;margin-right:12px;color:{badge_color};">{icono_estado}</span>
+                <span style="font-size:1.15em;font-weight:bold;color:{text_block};">{nombre_convenio}</span>
+                <span style="margin-left:auto;font-size:1.1em;font-weight:bold;color:{badge_color};background:{bg_block};padding:4px 12px;border-radius:8px;border:1.5px solid {badge_color};">{estado}</span>
             </div>
             """, unsafe_allow_html=True
         )
@@ -67,7 +69,7 @@ def render(db, user):
         # --- Resumen visual debajo del bloque de estado ---
         st.markdown(
             f"""
-            <div style="border:1px solid #ddd;padding:8px;margin-bottom:4px;border-radius:6px;background:#fafafa;">
+            <div style="border:1px solid #444;padding:8px;margin-bottom:4px;border-radius:6px;background:#282828;color:#fff;">
             Cuotas pagas: <b>{pagas}</b> | Cuotas impagas: <b>{impagas}</b><br>
             Inicio: <b>{fecha_inicio}</b> | Próxima cuota: <b>{proxima}</b> | Última cuota: <b>{ultima}</b>
             </div>
@@ -119,16 +121,17 @@ def render(db, user):
             st.write(f"Estado: {ag.get('status','DRAFT')}")
             for inst in items:
                 d = inst.to_dict()
-                color_bg = "#eafaf1" if d.get("paid") else "#faeaea"
+                color_bg = "#282828" if d.get("paid") else "#2a2a2a"
                 color_title = "#2e7d32" if d.get("paid") else "#c62828"
                 estado_cuota = "Pagada" if d.get("paid") else "Impaga"
                 icono_cuota = "✔️" if d.get("paid") else "⏳"
+                text_color = "#fff"
                 st.markdown(
                     f"""
-                    <div style="background:{color_bg};border:1.5px solid #ddd;padding:12px;margin-bottom:10px;border-radius:10px;">
+                    <div style="background:{color_bg};border:1.5px solid #444;padding:12px;margin-bottom:10px;border-radius:10px;">
                     <span style="font-size:1.1em;font-weight:bold;color:{color_title};">{icono_cuota} Cuota {d['number']}</span>
                     <span style="float:right;color:{color_title};font-weight:bold;">{estado_cuota}</span><br>
-                    <span style="font-size:0.97em;">Vencimiento: <b>{d['due_date']}</b> | Total: <b>${d['total']:,.2f}</b></span>
+                    <span style="font-size:0.97em;color:{text_color};">Vencimiento: <b>{d['due_date']}</b> | Total: <b>${d['total']:,.2f}</b></span>
                     </div>
                     """, unsafe_allow_html=True
                 )
