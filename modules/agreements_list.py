@@ -107,7 +107,7 @@ def render(db, user):
                 motivo_rechazo = col2.text_input("Motivo rechazo (opcional)", key=f"motivo_{ag_doc.id}")
                 if col2.button("Rechazar convenio", key=f"rechazar_{ag_doc.id}"):
                     ag_doc.reference.update({"status": "REJECTED", "rejection_note": motivo_rechazo})
-                    notify_agreement_rejected(st, db, ag_doc, motivo_rechazo)
+                    notify_agreement_rejected(st, db, ag_doc.reference, motivo_rechazo)  # <-- CORREGIDO: pasa la referencia
                     st.warning("Convenio rechazado.")
                     st.rerun()
             # ADMIN: eliminar convenio
