@@ -78,8 +78,8 @@ def render(db, user):
         )
 
         with st.expander(f"{nombre_convenio}"):
-            # Si el cliente rechazó el convenio, mostrar solo el estado y motivo
-            if user.get("role") == "cliente" and ag.get("status") == "REJECTED":
+            # Si el convenio está rechazado, mostrar solo el estado y motivo para cliente y operador
+            if ag.get("status") == "REJECTED":
                 st.markdown(
                     f"""
                     <div style="border:1px solid #c62828;padding:12px;margin-bottom:8px;border-radius:10px;background:#2a2a2a;color:#fff;">
@@ -88,6 +88,11 @@ def render(db, user):
                     </div>
                     """, unsafe_allow_html=True
                 )
+                if user.get("role") == "operador":
+                    st.info("Puedes modificar el convenio y volver a enviarlo al cliente.")
+                    if st.button("Modificar convenio y reenviar", key=f"modificar_{ag_doc.id}"):
+                        st.session_state["edit_agreement_id"] = ag_doc.id
+                        st.experimental_rerun()
                 continue
 
             if user.get("role") == "operador" and ag.get("status") == "DRAFT":
@@ -154,7 +159,6 @@ def render(db, user):
                         mark_unpaid(inst.reference)
                         st.warning("⏪ Cuota revertida a impaga.")
                         st.rerun()
-                # Cliente: declarar pago y subir comprobante SOLO si no está pendiente/aprobada/rechazada
                 if user.get("role") == "cliente" and not d.get("paid") and d.get("receipt_status") not in ["PENDING", "APPROVED", "REJECTED"]:
                     st.markdown("**¿Pagaste esta cuota?**")
                     comprobante = st.file_uploader(
@@ -183,6 +187,5 @@ def render(db, user):
                         })
                         st.success("¡Pago declarado correctamente! El operador recibirá tu comprobante y te notificará cuando lo apruebe o rechace.")
                         st.rerun()
-                # Control de acceso: solo operador y cliente ven el comprobante
                 if user.get("role") in ["operador", "cliente"] and d.get("receipt_url"):
                     st.markdown(f"{d['receipt_url']}")
