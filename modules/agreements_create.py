@@ -1,4 +1,5 @@
 import streamlit as st
+import re
 from datetime import date
 from core.firebase import get_bucket
 from services.config import get_settings
@@ -10,6 +11,9 @@ from core.mail import send_email
 
 MAX_MB = 10
 ALLOWED_MIME = {"application/pdf","image/jpeg","image/png"}
+
+def is_valid_email(email):
+    return re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email) is not None
 
 def render(db, user):
     st.subheader("🆕 Crear convenio")
@@ -38,7 +42,13 @@ def render(db, user):
         enviar_aprobacion = st.checkbox("Enviar a aprobación directa", value=False)
         ok = st.form_submit_button("Guardar convenio", use_container_width=True)
     if not ok: return
-    if not client_email or principal <= 0 or installments < 1:
+
+    # --- Validación de email ---
+    if not client_email or not is_valid_email(client_email):
+        st.error("Ingresá un email válido para el cliente.")
+        return
+
+    if principal <= 0 or installments < 1:
         st.error("Completá los datos obligatorios."); return
     if attach_files:
         for f in attach_files:
