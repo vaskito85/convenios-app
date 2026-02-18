@@ -18,7 +18,6 @@ def render(db, user):
     if not ags:
         st.info("No tenés convenios todavía."); return
 
-    # --- Resumen visual de convenios ---
     for ag_doc in ags:
         ag = ag_doc.to_dict()
         items = list(ag_doc.reference.collection("installments").order_by("number").stream())
@@ -54,13 +53,23 @@ def render(db, user):
             "REJECTED": "#c62828"
         }.get(estado, "#888")
 
+        # --- Bloque visual de estado mejorado ---
         st.markdown(
             f"""
-            <div style="border:2px solid #1976d2;padding:12px;margin-bottom:8px;border-radius:10px;background:#f5f5f5;">
-            <span style="font-size:1.2em;font-weight:bold;">{icono_estado} {nombre_convenio}</span>
-            <span style="float:right;color:{badge_color};font-weight:bold;">[{estado}]</span><br>
-            <span style="font-size:0.98em;">Cuotas pagas: <b>{pagas}</b> | Cuotas impagas: <b>{impagas}</b></span><br>
-            <span style="font-size:0.98em;">Inicio: <b>{fecha_inicio}</b> | Próxima cuota: <b>{proxima}</b> | Última cuota: <b>{ultima}</b></span>
+            <div style="border:2px solid {badge_color};background:#f5f5f5;padding:16px 12px 12px 12px;margin-bottom:8px;border-radius:12px;display:flex;align-items:center;">
+                <span style="font-size:1.3em;font-weight:bold;margin-right:12px;">{icono_estado}</span>
+                <span style="font-size:1.15em;font-weight:bold;">{nombre_convenio}</span>
+                <span style="margin-left:auto;font-size:1.1em;font-weight:bold;color:{badge_color};background:white;padding:4px 12px;border-radius:8px;border:1.5px solid {badge_color};">{estado}</span>
+            </div>
+            """, unsafe_allow_html=True
+        )
+
+        # --- Resumen visual debajo del bloque de estado ---
+        st.markdown(
+            f"""
+            <div style="border:1px solid #ddd;padding:8px;margin-bottom:4px;border-radius:6px;background:#fafafa;">
+            Cuotas pagas: <b>{pagas}</b> | Cuotas impagas: <b>{impagas}</b><br>
+            Inicio: <b>{fecha_inicio}</b> | Próxima cuota: <b>{proxima}</b> | Última cuota: <b>{ultima}</b>
             </div>
             """, unsafe_allow_html=True
         )
