@@ -88,7 +88,6 @@ def main():
     elif choice.endswith("Usuarios (admin)"):
         admin_users_page(db, user)
     elif choice.endswith("Modificar convenio"):
-        # Si hay convenio seleccionado, muestra la edición; si no, muestra mensaje
         ag_id = st.session_state.get("edit_agreement_id")
         ag_doc = db.collection("agreements").document(ag_id).get() if ag_id else None
         agreement_edit.render(db, user, ag_doc)
