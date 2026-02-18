@@ -77,6 +77,18 @@ def render(db, user):
         )
 
         with st.expander(f"{nombre_convenio}"):
+            # Si el cliente rechazó el convenio, mostrar solo el estado y motivo
+            if user.get("role") == "cliente" and ag.get("status") == "REJECTED":
+                st.markdown(
+                    f"""
+                    <div style="border:1px solid #c62828;padding:12px;margin-bottom:8px;border-radius:10px;background:#2a2a2a;color:#fff;">
+                    <span style="font-size:1.1em;font-weight:bold;color:#c62828;">❌ Convenio rechazado</span><br>
+                    <span style="font-size:0.97em;">Motivo: <b>{ag.get('rejection_note','(sin motivo)')}</b></span>
+                    </div>
+                    """, unsafe_allow_html=True
+                )
+                continue  # No mostrar nada más para este convenio
+
             # OPERADOR: enviar a aprobación si está en DRAFT
             if user.get("role") == "operador" and ag.get("status") == "DRAFT":
                 if st.button("Enviar a aprobación", key=f"aprobacion_{ag_doc.id}"):
@@ -107,7 +119,7 @@ def render(db, user):
                 motivo_rechazo = col2.text_input("Motivo rechazo (opcional)", key=f"motivo_{ag_doc.id}")
                 if col2.button("Rechazar convenio", key=f"rechazar_{ag_doc.id}"):
                     ag_doc.reference.update({"status": "REJECTED", "rejection_note": motivo_rechazo})
-                    notify_agreement_rejected(st, db, ag_doc.reference, motivo_rechazo)  # <-- CORREGIDO: pasa la referencia
+                    notify_agreement_rejected(st, db, ag_doc.reference, motivo_rechazo)
                     st.warning("Convenio rechazado.")
                     st.rerun()
             # ADMIN: eliminar convenio
