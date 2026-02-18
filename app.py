@@ -60,12 +60,10 @@ def main():
     menu += ["📄 Mis convenios"]
     if user.get("role")=="cliente" and pendientes_cliente > 0:
         menu += [f"⏳ Convenios por aceptar ({pendientes_cliente})"]
+    menu += ["✏️ Modificar convenio"]  # SIEMPRE visible para admin y operador
     menu += ["🔒 Mi contraseña"]
     if user.get("role")=="admin":
         menu += ["👥 Usuarios (admin)"]
-    # --- Agrega la opción de modificar convenio si corresponde ---
-    if "edit_agreement_id" in st.session_state and user.get("role") in ["operador", "admin"]:
-        menu += ["✏️ Modificar convenio"]
 
     with st.sidebar:
         st.markdown('<div class="sidebar-content">', unsafe_allow_html=True)
@@ -90,7 +88,9 @@ def main():
     elif choice.endswith("Usuarios (admin)"):
         admin_users_page(db, user)
     elif choice.endswith("Modificar convenio"):
-        ag_doc = db.collection("agreements").document(st.session_state["edit_agreement_id"]).get()
+        # Si hay convenio seleccionado, muestra la edición; si no, muestra mensaje
+        ag_id = st.session_state.get("edit_agreement_id")
+        ag_doc = db.collection("agreements").document(ag_id).get() if ag_id else None
         agreement_edit.render(db, user, ag_doc)
 
 if __name__=="__main__":
