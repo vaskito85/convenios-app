@@ -92,8 +92,7 @@ def render(db, user):
                     st.info("Puedes modificar el convenio y volver a enviarlo al cliente.")
                     if st.button("Modificar convenio y reenviar", key=f"modificar_{ag_doc.id}"):
                         st.session_state["edit_agreement_id"] = ag_doc.id
-                        st.session_state["menu_radio"] = "✏️ Modificar convenio"  # Cambia el menú lateral
-                        return
+                        return  # Navegación directa a la página de edición
                 continue
 
             if user.get("role") == "operador" and ag.get("status") == "DRAFT":
