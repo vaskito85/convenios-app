@@ -61,7 +61,9 @@ def main():
     menu += ["📄 Mis convenios"]
     if user.get("role")=="cliente" and pendientes_cliente > 0:
         menu += [f"⏳ Convenios por aceptar ({pendientes_cliente})"]
-    menu += ["✏️ Modificar convenio"]  # SIEMPRE visible para admin y operador
+    # Solo operador y admin ven "Modificar convenio"
+    if user.get("role") in ["admin","operador"]:
+        menu += ["✏️ Modificar convenio"]
     menu += ["🔒 Mi contraseña"]
     if user.get("role")=="admin":
         menu += ["👥 Usuarios (admin)"]
