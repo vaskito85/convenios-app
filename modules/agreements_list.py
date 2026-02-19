@@ -41,18 +41,48 @@ def render(db, user):
             fecha_str = "fecha"
         nombre_convenio = f"{nombre_cliente}_{fecha_str}"
 
-        st.markdown(f"""
-        <div class="card">
-        <b>{nombre_convenio}</b> <span style="color:#1976d2;font-weight:bold;">[{estado}]</span><br>
-        Cuotas pagas: <b>{pagas}</b> | Cuotas impagas: <b>{impagas}</b><br>
-        Inicio: <b>{fecha_inicio}</b> | Próxima cuota: <b>{proxima}</b> | Última cuota: <b>{ultima}</b>
-        </div>
-        """, unsafe_allow_html=True)
+        icono_estado = {
+            "DRAFT": "📝",
+            "PENDING_ACCEPTANCE": "⏳",
+            "ACTIVE": "✅",
+            "COMPLETED": "🏁",
+            "REJECTED": "❌"
+        }.get(estado, "📄")
+        badge_color = {
+            "DRAFT": "#888",
+            "PENDING_ACCEPTANCE": "#ff9800",
+            "ACTIVE": "#2e7d32",
+            "COMPLETED": "#1976d2",
+            "REJECTED": "#c62828"
+        }.get(estado, "#888")
+
+        bg_block = "#222"
+        text_block = "#fff"
+        st.markdown(
+            f"""
+            <div style="border:2px solid {badge_color};background:{bg_block};padding:16px 12px 12px 12px;margin-bottom:8px;border-radius:12px;display:flex;align-items:center;">
+                <span style="font-size:1.3em;font-weight:bold;margin-right:12px;color:{badge_color};">{icono_estado}</span>
+                <span style="font-size:1.15em;font-weight:bold;color:{text_block};">{nombre_convenio}</span>
+                <span style="margin-left:auto;font-size:1.1em;font-weight:bold;color:{badge_color};background:{bg_block};padding:4px 12px;border-radius:8px;border:1.5px solid {badge_color};">{estado}</span>
+            </div>
+            """, unsafe_allow_html=True
+        )
+
+        st.markdown(
+            f"""
+            <div style="border:1px solid #444;padding:8px;margin-bottom:4px;border-radius:6px;background:#282828;color:#fff;">
+            Cuotas pagas: <b>{pagas}</b> | Cuotas impagas: <b>{impagas}</b><br>
+            Inicio: <b>{fecha_inicio}</b> | Próxima cuota: <b>{proxima}</b> | Última cuota: <b>{ultima}</b>
+            </div>
+            """, unsafe_allow_html=True
+        )
+
         with st.expander(f"{nombre_convenio}"):
+            # Si el convenio está rechazado, mostrar solo el estado y motivo para cliente y operador
             if ag.get("status") == "REJECTED":
                 st.markdown(
                     f"""
-                    <div class="card" style="background:#2a2a2a;color:#fff;border:1px solid #c62828;">
+                    <div style="border:1px solid #c62828;padding:12px;margin-bottom:8px;border-radius:10px;background:#2a2a2a;color:#fff;">
                     <span style="font-size:1.1em;font-weight:bold;color:#c62828;">❌ Convenio rechazado</span><br>
                     <span style="font-size:0.97em;">Motivo: <b>{ag.get('rejection_note','(sin motivo)')}</b></span>
                     </div>
@@ -71,6 +101,7 @@ def render(db, user):
                     notify_agreement_sent(st, db, ag_doc)
                     st.success("Convenio enviado a aprobación.")
                     st.rerun()
+            # --- FINALIZAR CONVENIO Y ENVIAR PDF ---
             if user.get("role")=="operador" and pagas == len(items) and ag.get("status") != "COMPLETED":
                 if st.button("Finalizar convenio y enviar PDF", key=f"finalizar_{ag_doc.id}"):
                     ag_doc.reference.update({"status": "COMPLETED"})
@@ -113,14 +144,14 @@ def render(db, user):
                 text_color = "#fff"
                 st.markdown(
                     f"""
-                    <div class="card" style="background:{color_bg};color:{text_color};border:1.5px solid #444;">
+                    <div style="background:{color_bg};border:1.5px solid #444;padding:12px;margin-bottom:10px;border-radius:10px;">
                     <span style="font-size:1.1em;font-weight:bold;color:{color_title};">{icono_cuota} Cuota {d['number']}</span>
                     <span style="float:right;color:{color_title};font-weight:bold;">{estado_cuota}</span><br>
-                    <span style="font-size:0.97em;">Vencimiento: <b>{d['due_date']}</b> | Total: <b>${d['total']:,.2f}</b></span>
+                    <span style="font-size:0.97em;color:{text_color};">Vencimiento: <b>{d['due_date']}</b> | Total: <b>${d['total']:,.2f}</b></span>
                     </div>
                     """, unsafe_allow_html=True
                 )
-                # SOLO PERMITIR REVERTIR SI EL CONVENIO NO ESTÁ COMPLETED
+                # --- SOLO PERMITIR REVERTIR SI EL CONVENIO NO ESTÁ COMPLETED ---
                 if d.get("paid") and user.get("role") in ["operador", "admin"] and ag.get("status") != "COMPLETED":
                     if st.button(f"Revertir cuota {d['number']}", key=f"unpaid_{inst.id}"):
                         mark_unpaid(inst.reference)
