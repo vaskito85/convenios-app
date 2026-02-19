@@ -1,0 +1,26 @@
+body {background-color: #f4f6f8;}
+.stButton>button {font-size:1.1em;padding:12px 24px;border-radius:8px;background:#1976d2;color:#fff;border:none;}
+.stButton>button:hover {background:#1565c0;}
+.stTextInput>div>input {border-radius:8px;}
+.stFileUploader>div {border-radius:8px;}
+.card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+  padding: 18px 22px;
+  margin-bottom: 18px;
+}
+.menu-lateral {
+  background: #1976d2;
+  color: #fff;
+  border-radius: 0 0 12px 12px;
+  padding: 18px 0 10px 0;
+}
+.menu-lateral .menu-item {
+  font-size: 1.1em;
+  padding: 12px 0;
+  border-bottom: 1px solid #1565c0;
+}
+.menu-lateral .menu-item:last-child {border-bottom:none;}
+.menu-lateral .menu-item.selected {background:#1565c0;}
+.badge {background:#ff9800;color:#fff;border-radius:8px;padding:2px 8px;font-size:0.95em;margin-left:8px;}
