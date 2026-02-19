@@ -151,16 +151,17 @@ def render(db, user):
                     </div>
                     """, unsafe_allow_html=True
                 )
+                # --- SOLO PERMITIR REVERTIR SI EL CONVENIO NO ESTÁ COMPLETED ---
+                if d.get("paid") and user.get("role") in ["operador", "admin"] and ag.get("status") != "COMPLETED":
+                    if st.button(f"Revertir cuota {d['number']}", key=f"unpaid_{inst.id}"):
+                        mark_unpaid(inst.reference)
+                        st.warning("⏪ Cuota revertida a impaga.")
+                        st.rerun()
                 if user.get("role")=="operador" and not d.get("paid"):
                     colA, colB = st.columns(2)
                     if colA.button(f"Marcar pagada cuota {d['number']} (manual)", key=f"paid_{inst.id}"):
                         mark_paid(inst.reference, manual_note="Marcada manualmente por operador")
                         st.success("✔️ Cuota marcada como pagada.")
-                        st.rerun()
-                if d.get("paid") and user.get("role") in ["operador", "admin"]:
-                    if st.button(f"Revertir cuota {d['number']}", key=f"unpaid_{inst.id}"):
-                        mark_unpaid(inst.reference)
-                        st.warning("⏪ Cuota revertida a impaga.")
                         st.rerun()
                 if user.get("role") == "cliente" and not d.get("paid") and d.get("receipt_status") not in ["PENDING", "APPROVED", "REJECTED"]:
                     st.markdown("**¿Pagaste esta cuota?**")
