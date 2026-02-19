@@ -101,8 +101,10 @@ def render(db, user):
                     notify_agreement_sent(st, db, ag_doc)
                     st.success("Convenio enviado a aprobación.")
                     st.rerun()
+            # --- FINALIZAR CONVENIO Y ENVIAR PDF ---
             if user.get("role")=="operador" and pagas == len(items) and ag.get("status") != "COMPLETED":
                 if st.button("Finalizar convenio y enviar PDF", key=f"finalizar_{ag_doc.id}"):
+                    ag_doc.reference.update({"status": "COMPLETED"})
                     bucket = get_bucket()
                     pdf_bytes = build_agreement_pdf(db, bucket, ag_doc, leyenda="Convenio finalizado")
                     operador_email = ag.get("operator_email") or user.get("email")
@@ -111,7 +113,8 @@ def render(db, user):
                     html = f"<h4>Convenio finalizado</h4><p>Adjunto PDF con todas las cuotas pagas.</p>"
                     send_email(operador_email, asunto, html, attachments=[(f"{nombre_convenio}.pdf", pdf_bytes, "application/pdf")])
                     send_email(cliente_email, asunto, html, attachments=[(f"{nombre_convenio}.pdf", pdf_bytes, "application/pdf")])
-                    st.success("PDF generado y enviado por email al operador y cliente.")
+                    st.success("PDF generado y enviado por email al operador y cliente. El convenio está FINALIZADO.")
+                    st.rerun()
             if user.get("role") == "cliente" and ag.get("status") == "PENDING_ACCEPTANCE":
                 col1, col2 = st.columns(2)
                 if col1.button("Aceptar convenio", key=f"aceptar_{ag_doc.id}"):
